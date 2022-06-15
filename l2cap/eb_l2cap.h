@@ -1,6 +1,15 @@
 #ifndef __EB_L2CAP__
 #define __EB_L2CAP__
 
+/*********************************************
+ *
+ *
+ * 所有的conn_idx 都是 0 ~ max_conn - 1, 0xFF 表示INVALID INDEX
+ *
+ *
+ *
+ */
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stddef.h>
@@ -8,20 +17,19 @@
 #include <assert.h>
 #include <stdbool.h>
 
-#define EB_L2CAP_MALLOC  malloc
-#define EB_L2CAP_FREE    free
-#define EB_L2CAP_ASSERT  assert
-#define EB_L2CAP_WARNING(x) do{if(!(x)){printf("[L2CAP] Warning: %s@%d\n", __func__, __LINE__);}}while(0)
-
-#define EB_L2CAP_MAX_RECV_LENGTH 1024
-#define EB_L2CAP_SEND_BUF_LENGTH 8192
+#define EB_L2CAP_ERROR(exp, err)     assert(exp)
+#define EB_L2CAP_WARNING(exp, err)   do{if(!(exp)){printf("[L2CAP] Warning: %s@%d\n", __func__, __LINE__);}}while(0)
+#define EB_L2CAP_INFO(fmt, ...)      do{printf("[L2CAP] Info: " fmt, ##__VA_ARGS__);}while(0)
 
 #define EB_L2CAP_CID_ATT 0x04
 #define EB_L2CAP_CID_SIG 0x05
 #define EB_L2CAP_CID_SMP 0x06
 
 enum {
-    EB_L2CAP_AST_NO_ERR = 0,
+    EB_L2CAP_DBG_NO_ERR = 0,
+    EB_L2CAP_DBG_ERR_PARAM,
+    EB_L2CAP_DBG_ERR_NO_CONN,
+    EB_L2CAP_DBG_ERR_UNSPE,
 };
 
 struct eb_l2cap;
@@ -36,19 +44,30 @@ struct eb_l2cap;
  * @param total_num_le_acl_data_packets  max number of acl data in controller
  * @param max_connection                 max number of connection can be support
  ******************************************************************************/
-struct eb_l2cap_cfg {
-    void (*send)(uint8_t *data, int len, void *usr_data);
-    void (*proc)(uint16_t conn_hdl, uint16_t cid, void *payload, int len, void *usr_data);
-    void (*connected)(uint16_t conn_hdl, uint8_t role, uint8_t *peer_addr, uint8_t peer_addr_type,
-                      uint8_t *local_addr, uint8_t local_addr_type, void *usr_data);
-    void (*disconnected)(uint16_t conn_hdl, void *usr_data);
-    int acl_data_packet_length;
-    int total_num_le_acl_data_packets;
-    int max_connection;
-};
 
-int eb_l2cap_size(int max_connection);
-struct eb_l2cap *eb_l2cap_init(struct eb_l2cap *l2cap, struct eb_l2cap_cfg *cfg, void *usr_data);
+struct eb_l2cap_callbacks {
+    void (*send_cb)(uint8_t *data, int len);
+    void (*proc_cb)(uint8_t conn_idx, uint16_t cid, void *payload, int len);
+    void (*connected_cb)(uint8_t conn_idx, uint8_t role, uint8_t *peer_addr, uint8_t peer_addr_type,
+                         uint8_t *local_addr, uint8_t local_addr_type);
+    void (*disconnected_cb)(uint8_t conn_idx);
+    void (*free_send_pkg)(void *package);
+};
+struct eb_l2cap_cfg {
+    const struct eb_l2cap_callbacks *cb;
+    uint16_t acl_data_packet_length;
+    uint8_t total_num_le_acl_data_packets : 4;
+    uint8_t max_connection : 4;
+    uint16_t max_recv_buf_len; // 必须4字节对齐
+};
+struct eb_l2cap *eb_l2cap_init(struct eb_l2cap *l2cap, struct eb_l2cap_cfg *cfg);
+
+/*******************************************************************************
+ * 返回初始化 struct eb_l2cap 结构体的长度
+ * @param max_connection         max number of connection can be support
+ * @param max_recv_buf_len       max buffer length for receiving, 组包后的最大长度，即MTU长度
+ ******************************************************************************/
+int eb_l2cap_size(int max_connection, int max_recv_buf_len);
 
 /*******************************************************************************
  * Upper layer use this api to send data to l2cap buffer
@@ -56,26 +75,40 @@ struct eb_l2cap *eb_l2cap_init(struct eb_l2cap *l2cap, struct eb_l2cap_cfg *cfg,
  * @return avalable number of l2cap data that upper layer can send
  ******************************************************************************/
 struct eb_l2cap_send_data {
-    uint16_t conn_hdl;
+    uint8_t conn_idx;
     uint16_t cid;
     uint8_t *payload;
     int length;
-    void (*sent_cb)(void *usr_data);
-    void *usr_data;
+    uint16_t seq_num; // 0 means no callback
 };
+
 int eb_l2cap_send(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *data);
+
+
+// 只能注册一次，需要静态初始化回调链表
+struct eb_l2cap_send_cb {
+    int num_cbs;
+    void (*cbs[])(uint8_t conn_idx, uint16_t seq_num);
+};
+void eb_l2cap_reg_send_cb(struct eb_l2cap *l2cap, const struct eb_l2cap_send_cb *cb);
+
 
 struct eb_l2cap_func {
     void (*xx)(void);
 };
-int eb_l2cap_func_cfg(const struct eb_l2cap_func*cfg);
+extern const struct eb_l2cap_func *eb_l2cap_cfg_acl_reasm_multi_link;
+extern const struct eb_l2cap_func *eb_l2cap_cfg_acl_noreasm_multi_link;
+extern const struct eb_l2cap_func *eb_l2cap_cfg_acl_reasm_single_link;
+extern const struct eb_l2cap_func *eb_l2cap_cfg_acl_noreasm_single_link;
+int eb_l2cap_func_cfg(const struct eb_l2cap_func *cfg); // select a const configuration
 
-void eb_l2cap_received(struct eb_l2cap *l2cap, uint16_t hdl_flags, uint16_t datalen, uint8_t *payload);
-void eb_l2cap_connected(struct eb_l2cap *l2cap, uint16_t conn_hdl, uint8_t role,
-                        uint8_t *peer_addr, uint8_t peer_addr_type, uint8_t *local_addr, uint8_t local_addr_type);
-void eb_l2cap_disconnected(struct eb_l2cap *l2cap, uint16_t conn_hdl);
-void eb_l2cap_acl_cfg(struct eb_l2cap *l2cap, uint16_t pkg_size, int pkg_num);
-void eb_l2cap_packets_completed(struct eb_l2cap *l2cap, uint16_t conn_hdl, int pkg_num);
+
+void eb_pl2cap_received(struct eb_l2cap *l2cap, uint16_t hdl_flags, uint16_t datalen, uint8_t *payload);
+void eb_pl2cap_connected(struct eb_l2cap *l2cap, uint8_t conn_idx, uint8_t role,
+                         uint8_t *peer_addr, uint8_t peer_addr_type, uint8_t *local_addr, uint8_t local_addr_type);
+void eb_pl2cap_disconnected(struct eb_l2cap *l2cap, uint8_t conn_idx);
+void eb_pl2cap_acl_cfg(struct eb_l2cap *l2cap, uint16_t pkg_size, int pkg_num);
+void eb_pl2cap_packets_completed(struct eb_l2cap *l2cap, uint8_t conn_idx, int pkg_num);
 
 /*******************************************************************************
  * schedule once for sending buffer data to controller

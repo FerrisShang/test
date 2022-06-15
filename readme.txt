@@ -8,3 +8,5 @@ smp    |  master / slave
 
 memory release..
 l2cap reserved buffer for sending acl data
+l2cap 发送buffer由用户提供，并且上层提供free接口,发送内存可以用ringbuffer方式，因为数据是顺序释放
+l2cap 配置采用套餐形式，调用接口直接用给好的参数即可
