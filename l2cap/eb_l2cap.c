@@ -130,7 +130,8 @@ static struct eb_l2cap_conn *set_l2cap_by_idx(struct eb_l2cap *l2cap, uint8_t co
 struct eb_l2cap_send_data *eb_l2cap_malloc(struct eb_l2cap *l2cap, int data_len)
 {
     EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
-    struct eb_l2cap_send_data *p = (struct eb_l2cap_send_data *)l2cap->cb->malloc_pkg_cb(data_len + L2CAP_RSV_LEN);
+    struct eb_l2cap_send_data *p = (struct eb_l2cap_send_data *)l2cap->cb->malloc_pkg_cb(
+                                       data_len + sizeof(struct eb_l2cap_send_data_internal));
     if (p) {
         p->seq_num = 0;
         return (struct eb_l2cap_send_data *)((uint8_t *)p + L2CAP_RSV_LEN);
@@ -154,62 +155,10 @@ void eb_l2cap_send(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *data)
         struct eb_l2cap_send_data_internal *int_data =
             (struct eb_l2cap_send_data_internal *)((uint8_t *)data - L2CAP_RSV_LEN);
         eb_queue_push(&conn->tx_list, (struct eb_queue_item *)int_data);
+    } else {
+        l2cap->cb->free_pkg_cb((uint8_t *)data - L2CAP_RSV_LEN);
     }
 }
-
-#if 0
-int _eb_l2cap_send_(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *data)
-{
-    EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
-
-    int l2cap_header_len = 4; // len(LENGTH) + len(CID) = 4
-    int offset = 0;
-    struct eb_l2cap_conn *conn = get_l2cap_by_idx(l2cap, data->conn_idx);
-    if (!conn) {
-        return -1; // not connected
-    }
-    while (offset < data->length) {
-        int acl_len;
-        if (l2cap_header_len + (data->length - offset) >
-                l2cap->acl_data_packet_length) { // L2CAP Header + Length of Data > ACL packet length
-            acl_len = l2cap->acl_data_packet_length - l2cap_header_len;
-        } else {
-            acl_len = l2cap_header_len + data->length - offset;
-        }
-        // callback + usr_data + ACL Header + ACL Data
-        int buf_len = sizeof(data->sent_cb) + sizeof(data->usr_data) + sizeof(uint16_t) * 2 + acl_len;
-        uint8_t *p = block_queue_push_peek(&conn->send_ringbuf, buf_len);
-        size_t *d = (size_t *)p;
-        EB_L2CAP_ERROR(p); // No buffer cause Assert
-        uint16_t hdl_flags;
-        if (offset == 0) {
-            *d++ = (size_t)data->sent_cb;
-            *d++ = (size_t)data->usr_data;
-            hdl_flags = data->conn_idx | EB_L2CAP_PB_FNFP;
-        } else {
-            *d++ = (size_t)NULL;
-            *d++ = (size_t)0x5F5F5F5F;
-            hdl_flags = data->conn_idx | EB_L2CAP_PB_CF;
-        }
-        p += sizeof(data->sent_cb) + sizeof(data->usr_data);
-        *p++ = (hdl_flags >> 0) & 0xFF;
-        *p++ = (hdl_flags >> 8) & 0xFF;
-        *p++ = (acl_len >> 0) & 0xFF;
-        *p++ = (acl_len >> 8) & 0xFF;
-        if (offset == 0) {
-            *p++ = (data->length >> 0) & 0xFF;
-            *p++ = (data->length >> 8) & 0xFF;
-            *p++ = (data->cid >> 0) & 0xFF;
-            *p++ = (data->cid >> 8) & 0xFF;
-        }
-        memcpy(p, data->payload, data->length);
-        block_queue_push(&conn->send_ringbuf);
-        l2cap->tx_available--;
-        offset += acl_len;
-    }
-    return l2cap->tx_available;
-}
-#endif
 
 void eb_pl2cap_received(struct eb_l2cap *l2cap, uint8_t conn_idx, uint16_t hdl_flags, uint16_t datalen,
                         uint8_t *payload)
@@ -322,7 +271,7 @@ void eb_pl2cap_packets_completed(struct eb_l2cap *l2cap, uint8_t conn_idx, int p
     }
 }
 
-void eb_l2cap_sche_flush_once(struct eb_l2cap *l2cap)
+void eb_l2cap_sche_once(struct eb_l2cap *l2cap)
 {
     EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
     int i;
@@ -331,7 +280,8 @@ void eb_l2cap_sche_flush_once(struct eb_l2cap *l2cap)
         if (idx >= l2cap->max_connection) {
             idx -= l2cap->max_connection;
         }
-        struct eb_l2cap_conn *conn = &l2cap->conn[idx];
+        // struct eb_l2cap_conn *conn = &l2cap->conn[idx];
+        struct eb_l2cap_conn *conn = get_l2cap_by_idx(l2cap, idx);
         int send_flag = false;
         while (l2cap->num_le_acl_data_packets) {
             if (conn) {
@@ -343,11 +293,15 @@ void eb_l2cap_sche_flush_once(struct eb_l2cap *l2cap)
                     uint16_t data_send_len;
                     uint8_t *ps = p->data.payload + conn->tx_idx;
                     if (conn->tx_idx == 0) {
+                        // init param
+                        p->conn_idx = p->data.conn_idx;
+                        p->seq_num = p->data.seq_num;
+
                         hdl_flags = conn->conn_hdl | EB_L2CAP_PB_FNFP;
-                        if ((l2cap_header_len + p->data.length) >
-                                l2cap->acl_data_packet_length) { // L2CAP Header + Length of Data > ACL packet length
+                        conn->tx_len = p->data.length;
+                        // L2CAP Header + Length of Data > ACL packet length
+                        if ((l2cap_header_len + p->data.length) > l2cap->acl_data_packet_length) {
                             acl_len = l2cap->acl_data_packet_length;
-                            conn->tx_len = p->data.length;
                         } else {
                             acl_len = l2cap_header_len + p->data.length;
                         }
@@ -355,7 +309,7 @@ void eb_l2cap_sche_flush_once(struct eb_l2cap *l2cap)
                         ps -= sizeof(uint16_t); // skip l2cap length
                         data_send_len = acl_len - l2cap_header_len;
                     } else {
-                        hdl_flags = p->data.conn_idx | EB_L2CAP_PB_CF;
+                        hdl_flags = conn->conn_hdl | EB_L2CAP_PB_CF;
                         if ((p->data.length - conn->tx_idx) >
                                 l2cap->acl_data_packet_length) { // L2CAP Header + Length of Data > ACL packet length
                             acl_len = l2cap->acl_data_packet_length;
@@ -377,19 +331,23 @@ void eb_l2cap_sche_flush_once(struct eb_l2cap *l2cap)
                     l2cap->cb->send_cb(ps, pre_len + acl_len);
                     if (conn->tx_idx >= conn->tx_len) {
                         EB_L2CAP_ERROR(conn->tx_idx == conn->tx_len, EB_L2CAP_DBG_ERR_UNSPE);
+                        conn->tx_idx = 0;
                         eb_queue_pop(&conn->tx_list);
                         l2cap->cb->send_done_cb(p->conn_idx, p->seq_num);
                         l2cap->cb->free_pkg_cb(p);
+                        send_flag = true;
                     }
                     continue;
                 }
             }
             break;
         }
-        if (l2cap->num_le_acl_data_packets == 0 && send_flag) {
-            l2cap->conn_sent_idx++;
-            if (l2cap->conn_sent_idx == l2cap->max_connection) {
-                l2cap->conn_sent_idx = 0;
+        if (l2cap->num_le_acl_data_packets == 0) {
+            if (send_flag) {
+                l2cap->conn_sent_idx = idx + 1;
+                if (l2cap->conn_sent_idx >= l2cap->max_connection) {
+                    l2cap->conn_sent_idx = 0;
+                }
             }
             break;
         }

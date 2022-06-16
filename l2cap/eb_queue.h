@@ -20,13 +20,12 @@ inline static void eb_queue_init(struct eb_queue_header *header)
 
 inline static void eb_queue_push(struct eb_queue_header *header, struct eb_queue_item *p)
 {
-    struct eb_queue_item *last = header->last;
-    if (last == NULL) {
+    if (header->last == NULL) {
         header->first = p;
     } else {
-        last->next = p;
+        header->last->next = p;
     }
-    last = p;
+    header->last = p;
 }
 
 inline static struct eb_queue_item *eb_queue_peek(struct eb_queue_header *header)

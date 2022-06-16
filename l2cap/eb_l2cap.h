@@ -101,7 +101,7 @@ void eb_pl2cap_packets_completed(struct eb_l2cap *l2cap, uint8_t conn_idx, int p
  * schedule once for sending buffer data to controller
  * @param l2cap module of l2cap
  ******************************************************************************/
-void eb_l2cap_sche_flush_once(struct eb_l2cap *l2cap);
+void eb_l2cap_sche_once(struct eb_l2cap *l2cap);
 
 #endif /* __EB_L2CAP__ */
 
