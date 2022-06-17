@@ -16,9 +16,10 @@ void send_cb(uint8_t *data, int len)
     printf("\n");
 }
 
-void send_done_cb(uint8_t conn_idx, uint8_t seq_num)
+void send_done_cb(struct eb_l2cap_send_data *data, uint8_t status)
 {
-    printf("%s@%d conn_idx:0x%02X seq_num:0x%02X\n", __func__, __LINE__, conn_idx, seq_num);
+    printf("%s@%d st:%d, conn_idx:0x%02X seq_num:0x%02X\n", __func__, __LINE__, status, data->conn_idx, data->seq_num);
+    free((uint8_t*)data-EB_L2CAP_RESERVED_SIZE);
 }
 
 void proc_cb(uint8_t conn_idx, uint16_t cid, void *payload, int len)
@@ -37,16 +38,11 @@ void disconnected_cb(uint8_t conn_idx)
     printf("%s@%d,idx=%d\n", __func__, __LINE__, conn_idx);
 }
 
-void *malloc_pkg_cb(int size)
+void *eb_l2cap_malloc(void *p, int size)
 {
-    return malloc(size);
+    uint8_t *r = malloc(EB_L2CAP_MALLOC_SIZE(size));
+    return r + EB_L2CAP_RESERVED_SIZE;
 }
-
-void free_pkg_cb(void *package)
-{
-    free(package);
-}
-
 int main(void)
 {
     struct eb_l2cap_callbacks l2cap_cbs = {
@@ -55,8 +51,6 @@ int main(void)
         proc_cb,
         connected_cb,
         disconnected_cb,
-        malloc_pkg_cb,
-        free_pkg_cb,
     };
     struct eb_l2cap_cfg l2cap_cfg = {
         .cb = &l2cap_cbs,
@@ -109,6 +103,15 @@ int main(void)
     eb_pl2cap_packets_completed((struct eb_l2cap *)l2cap, 3, 4);
     eb_l2cap_sche_once((struct eb_l2cap *)l2cap);
     DUMP_AVA_PKG(); // 4 - 5 + 4 = 3
+    {
+        struct eb_l2cap_send_data *data = eb_l2cap_malloc((struct eb_l2cap *)l2cap, 23);
+        data->conn_idx = 3;
+        data->seq_num = 0xD1;
+        data->cid = 0x06;
+        data->length = 23;
+        memcpy(data->payload, "00000000000000000000000", 23);
+        eb_l2cap_send((struct eb_l2cap *)l2cap, data);
+    }
     eb_pl2cap_disconnected((struct eb_l2cap *)l2cap, 3);
     DUMP_AVA_PKG(); // auto add pending(1) = 4
     // multi connection

@@ -17,7 +17,7 @@ struct eb_l2cap_func {
 static const struct eb_l2cap_func *l2cap_func;
 
 struct eb_l2cap_send_data_internal {
-    struct eb_queue_item item;
+    struct eb_queue_item *next;
     uint8_t conn_idx;
     uint8_t seq_num;
     uint32_t reserved;
@@ -127,27 +127,6 @@ static struct eb_l2cap_conn *set_l2cap_by_idx(struct eb_l2cap *l2cap, uint8_t co
 
 #define L2CAP_RSV_LEN offsetof(struct eb_l2cap_send_data_internal, data)
 
-struct eb_l2cap_send_data *eb_l2cap_malloc(struct eb_l2cap *l2cap, int data_len)
-{
-    EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
-    struct eb_l2cap_send_data *p = (struct eb_l2cap_send_data *)l2cap->cb->malloc_pkg_cb(
-                                       data_len + sizeof(struct eb_l2cap_send_data_internal));
-    if (p) {
-        p->seq_num = 0;
-        return (struct eb_l2cap_send_data *)((uint8_t *)p + L2CAP_RSV_LEN);
-    } else {
-        return NULL;
-    }
-}
-
-void eb_l2cap_free(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *p)
-{
-    EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
-    if (p) {
-        l2cap->cb->free_pkg_cb((uint8_t *)p - L2CAP_RSV_LEN);
-    }
-}
-
 void eb_l2cap_send(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *data)
 {
     struct eb_l2cap_conn *conn = get_l2cap_by_idx(l2cap, data->conn_idx);
@@ -156,7 +135,7 @@ void eb_l2cap_send(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *data)
             (struct eb_l2cap_send_data_internal *)((uint8_t *)data - L2CAP_RSV_LEN);
         eb_queue_push(&conn->tx_list, (struct eb_queue_item *)int_data);
     } else {
-        l2cap->cb->free_pkg_cb((uint8_t *)data - L2CAP_RSV_LEN);
+        l2cap->cb->send_done_cb(data, EB_L2CAP_SD_NO_CONN);
     }
 }
 
@@ -234,6 +213,13 @@ void eb_pl2cap_disconnected(struct eb_l2cap *l2cap, uint8_t conn_idx)
     EB_L2CAP_WARNING(conn, EB_L2CAP_DBG_ERR_NO_CONN);
     if (conn) {
         l2cap->num_le_acl_data_packets += conn->pending_acl_packets;
+        // release tx buffer
+        struct eb_l2cap_send_data_internal *int_data = (struct eb_l2cap_send_data_internal *)eb_queue_pop(&conn->tx_list);
+        while (int_data) {
+            struct eb_l2cap_send_data *p = &int_data->data;
+            int_data = (struct eb_l2cap_send_data_internal *)int_data->next;
+            l2cap->cb->send_done_cb(p, EB_L2CAP_SD_DISCONNECT);
+        }
         memset(conn, 0, sizeof(struct eb_l2cap_conn));
         conn->conn_hdl = EB_L2CAP_INVALID_HDL;
         l2cap->cb->disconnected_cb(conn_idx);
@@ -333,8 +319,9 @@ void eb_l2cap_sche_once(struct eb_l2cap *l2cap)
                         EB_L2CAP_ERROR(conn->tx_idx == conn->tx_len, EB_L2CAP_DBG_ERR_UNSPE);
                         conn->tx_idx = 0;
                         eb_queue_pop(&conn->tx_list);
-                        l2cap->cb->send_done_cb(p->conn_idx, p->seq_num);
-                        l2cap->cb->free_pkg_cb(p);
+                        p->data.conn_idx = p->conn_idx;
+                        p->data.seq_num = p->seq_num;
+                        l2cap->cb->send_done_cb(&p->data, EB_L2CAP_SD_SUCCESS);
                         send_flag = true;
                     }
                     continue;

@@ -26,6 +26,7 @@ inline static void eb_queue_push(struct eb_queue_header *header, struct eb_queue
         header->last->next = p;
     }
     header->last = p;
+    p->next = NULL;
 }
 
 inline static struct eb_queue_item *eb_queue_peek(struct eb_queue_header *header)

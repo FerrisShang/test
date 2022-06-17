@@ -18,9 +18,11 @@
 #include <stdbool.h>
 #include <assert.h>
 
-#define EB_L2CAP_ERROR(exp, err)     assert(exp)
-#define EB_L2CAP_WARNING(exp, err)   do{if(!(exp)){printf("[L2CAP] Warning: %s@%d\n", __func__, __LINE__);}}while(0)
-#define EB_L2CAP_INFO(fmt, ...)      do{printf("[L2CAP] Info: " fmt, ##__VA_ARGS__);}while(0)
+#define EB_L2CAP_RESERVED_SIZE             16
+#define EB_L2CAP_MALLOC_SIZE(payload_len)  (sizeof(struct eb_l2cap_send_data) + payload_len + EB_L2CAP_RESERVED_SIZE)
+#define EB_L2CAP_ERROR(exp, err)           assert(exp)
+#define EB_L2CAP_WARNING(exp, err)         do{if(!(exp)){printf("[L2CAP] Warning: %s@%d\n", __func__, __LINE__);}}while(0)
+#define EB_L2CAP_INFO(fmt, ...)            do{printf("[L2CAP] Info: " fmt, ##__VA_ARGS__);}while(0)
 
 #define EB_L2CAP_CID_ATT 0x04
 #define EB_L2CAP_CID_SIG 0x05
@@ -39,15 +41,27 @@ enum {
 
 struct eb_l2cap;
 
+struct eb_l2cap_send_data {
+    uint8_t conn_idx;
+    uint8_t seq_num; // 0 means no callback
+    uint16_t length;
+    uint16_t cid;
+    uint8_t payload[0];
+};
+
+enum eb_l2cap_send_done {
+    EB_L2CAP_SD_SUCCESS,
+    EB_L2CAP_SD_NO_CONN,
+    EB_L2CAP_SD_DISCONNECT,
+};
+
 struct eb_l2cap_callbacks {
     void (*send_cb)(uint8_t *data, int len);
-    void (*send_done_cb)(uint8_t conn_idx, uint8_t seq_num);
+    void (*send_done_cb)(struct eb_l2cap_send_data *data, uint8_t status); // status @ref enum eb_l2cap_send_done
     void (*proc_cb)(uint8_t conn_idx, uint16_t cid, void *payload, int len);
     void (*connected_cb)(uint8_t conn_idx, uint8_t role, uint8_t *peer_addr, uint8_t peer_addr_type,
                          uint8_t *local_addr, uint8_t local_addr_type);
     void (*disconnected_cb)(uint8_t conn_idx);
-    void *(*malloc_pkg_cb)(int size);
-    void (*free_pkg_cb)(void *package);
 };
 struct eb_l2cap_cfg {
     const struct eb_l2cap_callbacks *cb;
@@ -66,21 +80,10 @@ struct eb_l2cap *eb_l2cap_init(struct eb_l2cap *l2cap, struct eb_l2cap_cfg *cfg)
 int eb_l2cap_size(int max_connection, int max_recv_buf_len);
 
 /*******************************************************************************
- * Upper layer use this api to send data to l2cap buffer
- * @param ...
- * @return avalable number of l2cap data that upper layer can send
+ * 发送数据
+ * @data data由上层分配内存，且必须在该地址前保留12字节可写空间，
+ * data在使用完成后可以在send_done_cb回调函数中释放
  ******************************************************************************/
-struct eb_l2cap_send_data {
-    uint8_t conn_idx;
-    uint8_t seq_num; // 0 means no callback
-    uint16_t length;
-    uint16_t cid;
-    uint8_t payload[0];
-};
-
-struct eb_l2cap_send_data *eb_l2cap_malloc(struct eb_l2cap *l2cap, int data_len);
-void eb_l2cap_free(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *p);
-
 void eb_l2cap_send(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *data);
 
 struct eb_l2cap_func;
