@@ -1,22 +1,13 @@
 #ifndef __EB_L2CAP__
 #define __EB_L2CAP__
 
-#include "eb_config.h"
-/*********************************************
- *
- *
- * 所有的conn_idx 都是 0 ~ max_conn - 1, 0xFF 表示INVALID INDEX
- *
- *
- *
- */
-
 #include <stdint.h>
 #include <stdio.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdbool.h>
 #include <assert.h>
+#include "eb_config.h"
 
 #define EB_L2CAP_RESERVED_SIZE             16
 #define EB_L2CAP_MALLOC_SIZE(payload_len)  (sizeof(struct eb_l2cap_send_data) + payload_len + EB_L2CAP_RESERVED_SIZE)

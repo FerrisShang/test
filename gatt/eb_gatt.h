@@ -1,6 +1,7 @@
 #ifndef __EB_GATT_H__
 #define __EB_GATT_H__
 
+#include <stdint.h>
 #include "eb_config.h"
 #include "eb_att.h"
 

@@ -2,7 +2,7 @@
 #include "eb_l2cap.h"
 #include "eb_queue.h"
 
-#define EB_L2CAP_INVALID_HDL 0xFF
+#define EB_L2CAP_INVALID_HDL    0xFF
 #define EB_L2CAP_DEF_CONN_NUM   0x4
 #define EB_L2CAP_MAX_CONN_NUM   0x8
 

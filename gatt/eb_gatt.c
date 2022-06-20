@@ -45,7 +45,7 @@ struct eb_gatt {
     void (*disconnected)(uint16_t conn_hdl, void *usr_data);
     void (*proc)(uint16_t conn_hdl, struct gatt_param *param, void *usr_data);
     void *usr_data;
-    struct eb_att_db default_db;
+    void *default_db;
     uint16_t max_mtu;
     uint16_t max_connection;
     uint16_t max_write_cache;
