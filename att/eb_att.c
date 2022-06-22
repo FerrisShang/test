@@ -1,5 +1,9 @@
 #include <string.h>
 #include "eb_att.h"
+#include "eb_memory.h"
+
+#define EB_ATT_ENV_MALLOC            EB_ENV_MALLOC
+#define EB_ATT_ENV_FREE              EB_ENV_FREE
 
 struct eb_att_db {
     uint8_t max_serv_num;
@@ -15,20 +19,15 @@ const struct eb_uuid_16bit eb_att_cudd_def = { 2, { 0x01, 0x29 } };
 const struct eb_uuid_16bit eb_att_cccd_def = { 2, { 0x02, 0x29 } };
 const struct eb_uuid_16bit eb_att_rrd_def  = { 2, { 0x09, 0x29 } };
 
-int eb_att_db_init(void *att_db, int db_size)
+struct eb_att_db *eb_att_db_init(int max_serv_num)
 {
-    struct eb_att_db *db = (struct eb_att_db*)att_db;
-    int serv_size = (db_size - offsetof(struct eb_att_db, serv));
-    if(serv_size > 0){
-        memset(att_db, 0, db_size);
-        db->max_serv_num = serv_size / sizeof(void*);
-    } else {
-        db->max_serv_num = 0;
-    }
-    return db->max_serv_num;
+    struct eb_att_db *db = (struct eb_att_db *)EB_ATT_ENV_MALLOC(sizeof(struct eb_att_db) + max_serv_num * sizeof(
+                               struct eb_att_serv *));
+    db->max_serv_num = max_serv_num;
+    return db;
 }
 
-int eb_att_db_add(void*att_db, const struct eb_att_serv *att_serv)
+int eb_att_db_add(struct eb_att_db *att_db, const struct eb_att_serv *att_serv)
 {
     struct eb_att_db *db = att_db;
     if (db->serv_num >= db->max_serv_num) {
@@ -36,14 +35,14 @@ int eb_att_db_add(void*att_db, const struct eb_att_serv *att_serv)
         return EB_ATT_INVALID_HANDLE;
     }
     int i, start_handle = 1;
-    for(i=0;i<db->serv_num;i++){
+    for (i = 0; i < db->serv_num; i++) {
         start_handle += db->serv[i]->att_num + 1;
     }
     db->serv[db->serv_num++] = att_serv;
     return start_handle;
 }
 
-void eb_att_db_iter(const void *att_db, uint16_t start_handle, eb_att_db_search_cb_t cb, void *usr_data)
+void eb_att_db_iter(const struct eb_att_db *att_db, uint16_t start_handle, eb_att_db_search_cb_t cb, void *usr_data)
 {
     const struct eb_att_db *db = att_db;
     const struct eb_att_serv *cs = NULL; // current service
@@ -104,7 +103,8 @@ static int find_by_handle_cb(uint16_t handle, const struct eb_att_serv *serv,
     }
     return EB_ATT_SEARCH_EXIT;
 }
-bool eb_att_db_find_by_handle(const void*att_db, uint16_t handle, eb_att_db_search_cb_t cb, void *usr_data)
+
+bool eb_att_db_find_by_handle(const struct eb_att_db *att_db, uint16_t handle, eb_att_db_search_cb_t cb, void *usr_data)
 {
     struct find_param param = { usr_data, cb, handle };
     eb_att_db_iter(att_db, handle, find_by_handle_cb, &param);

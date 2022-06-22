@@ -15,6 +15,8 @@
 #define EB_ATT_INVALID_HANDLE  0x0000
 #define EB_UUID_CMP(uuid1, uuid2) ((uuid1)->uuid_len != (uuid2)->uuid_len || memcmp((uuid1)->uuid, (uuid2)->uuid, (uuid1)->uuid_len))
 
+struct eb_att_db;
+
 enum eb_att_perm {
     EB_ATT_PERM_NOAUTH = 0,
     EB_ATT_PERM_UNAUTH,
@@ -67,15 +69,12 @@ extern const struct eb_uuid_16bit eb_att_cudd_def;
 extern const struct eb_uuid_16bit eb_att_cccd_def;
 extern const struct eb_uuid_16bit eb_att_rrd_def;
 
-#define ATT_DB_SIZE(serv_num) (sizeof(void*)*(1+serv_num))
 /*******************************************************************************
  * Init att database
- * @prarm    att_db   buffer
- * @prarm    db_size  buffer size, refer to ATT_DB_SIZE
- * @reutrn   The number of service can be hode
- * @warning  att_db MUST be static variable
+ * @prarm    max_serv_num  service can be hold
+ * @reutrn   pointer of att_db
  ******************************************************************************/
-int eb_att_db_init(void *att_db, int db_size);
+struct eb_att_db *eb_att_db_init(int max_serv_num);
 
 /*******************************************************************************
  * Add att service to database
@@ -84,7 +83,7 @@ int eb_att_db_init(void *att_db, int db_size);
  * @reutrn   start handle of the added service
  * @warning  att_serv and it's related items MUST be static variables
  ******************************************************************************/
-int eb_att_db_add(void *att_db, const struct eb_att_serv *att_serv);
+int eb_att_db_add(struct eb_att_db *att_db, const struct eb_att_serv *att_serv);
 
 /*******************************************************************************
  * Callback type for att database searching
@@ -110,7 +109,7 @@ typedef int (*eb_att_db_search_cb_t)(uint16_t handle, const struct eb_att_serv *
  * @prarm    usr_data      user data
  * @NOTE     In callback, item == 0 if the attribute is service definition
  ******************************************************************************/
-void eb_att_db_iter(const void *att_db, uint16_t start_handle, eb_att_db_search_cb_t cb, void *usr_data);
+void eb_att_db_iter(const struct eb_att_db *att_db, uint16_t start_handle, eb_att_db_search_cb_t cb, void *usr_data);
 
 /*******************************************************************************
  * Iterate the ATT database to find the corresponding attribute by handle
@@ -120,7 +119,8 @@ void eb_att_db_iter(const void *att_db, uint16_t start_handle, eb_att_db_search_
  * @prarm    usr_data      user data
  * @NOTE     The return value in callback is unused
  ******************************************************************************/
-bool eb_att_db_find_by_handle(const void *att_db, uint16_t handle, eb_att_db_search_cb_t cb, void *usr_data);
+bool eb_att_db_find_by_handle(const struct eb_att_db *att_db, uint16_t handle, eb_att_db_search_cb_t cb,
+                              void *usr_data);
 
 #endif /* __EB_ATT_H__ */
 

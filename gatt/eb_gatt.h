@@ -6,10 +6,6 @@
 #include "eb_att.h"
 
 #define EB_GATT_INVALID_HANDLE  0x0000
-#define EB_GATT_MALLOC  malloc
-#define EB_GATT_FREE    free
-#define EB_GATT_ASSERT  assert
-#define EB_GATT_WARNING(x) do{if(!(x)){printf("Warning: %s@%d\n", __func__, __LINE__);}}while(0)
 
 enum eb_gatt_sec_level {
     EB_GATT_SEC_NO_SEC,
@@ -28,6 +24,7 @@ enum eb_gatt_evt_id {
     EB_GATTC_READ_RSP,
     EB_GATTC_WRITE_RSP,
 };
+
 struct gatt_param {
     uint8_t evt_id; // @ref enum eb_gatt_evt_id
     uint8_t status; // @ref enum att_error
@@ -66,16 +63,21 @@ struct gatt_param {
         } read_rsp;
     };
 };
+
 struct eb_gatt_param {
     void (*send)(uint16_t conn_idx, uint8_t *data, int len, void(*send_done)(void *), void *p);
     void (*proc)(uint16_t conn_idx, struct gatt_param *param);
     void (*connected)(uint16_t conn_idx);
     void (*disconnected)(uint16_t conn_idx);
+    void *(*send_malloc)(size_t size, uint8_t priority);
+    void (*send_free)(void *p);
+    void *default_db; // inited by eb_att_db_init
+    uint16_t max_write_cache; // 0 means use write offset
     uint16_t max_mtu;
     uint16_t max_connection;
-    uint16_t max_write_cache; // 0 means use write offset
 };
-void* eb_gatt_init(void *gatt, struct eb_gatt_param *param);
+
+void *eb_gatt_init(void *gatt, struct eb_gatt_param *param);
 void eb_gatt_size(uint8_t max_connection, uint16_t max_service_num, uint16_t max_write_cache);
 
 struct eb_gatt_cfg;

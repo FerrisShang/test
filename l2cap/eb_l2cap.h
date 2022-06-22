@@ -8,12 +8,15 @@
 #include <stdbool.h>
 #include <assert.h>
 #include "eb_config.h"
+#include "eb_debug.h"
 
 #define EB_L2CAP_RESERVED_SIZE             16
 #define EB_L2CAP_MALLOC_SIZE(payload_len)  (sizeof(struct eb_l2cap_send_data) + payload_len + EB_L2CAP_RESERVED_SIZE)
-#define EB_L2CAP_ERROR(exp, err)           assert(exp)
-#define EB_L2CAP_WARNING(exp, err)         do{if(!(exp)){printf("[L2CAP] Warning: %s@%d\n", __func__, __LINE__);}}while(0)
-#define EB_L2CAP_INFO(fmt, ...)            do{printf("[L2CAP] Info: " fmt, ##__VA_ARGS__);}while(0)
+
+#define EB_L2CAP_ERROR(exp, n)           EB_ERROR("[L2CAP] ", exp, n)
+#define EB_L2CAP_WARNING(exp, n)         EB_WARNING("[L2CAP] ", exp, n)
+#define EB_L2CAP_INFO(fmt, ...)            EB_INFO("[L2CAP] ", fmt, ##__VA_ARGS__)
+#define EB_L2CAP_DUMP(msg, buf, len)       EB_DUMP("[L2CAP] ", msg, buf, len)
 
 #define EB_L2CAP_CID_ATT 0x04
 #define EB_L2CAP_CID_SIG 0x05

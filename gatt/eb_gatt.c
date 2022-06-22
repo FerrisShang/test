@@ -2,14 +2,24 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "eb_gatt.h"
+#include "eb_memory.h"
+#include "eb_debug.h"
 
 #define EB_GATT_DEF_MTU        23
-#define EB_GATT_MAX_MTU        1000
-#define EB_GATT_DEF_CONN_NUM   0x4
-#define EB_GATT_MAX_CONN_NUM   0x8
+#define EB_GATT_MAX_MTU        1024
 
-#define EB_GATT_INVALID_CONN_HDL 0xFFFF
+#define EB_GATT_INVALID_CONN_IDX 0xF
 #define EB_GATT_ATT_OPCODE_NONE  0
+
+#define EB_GATT_ERROR(exp, n)         EB_ERROR("[GATT] ", exp, n)
+#define EB_GATT_WARNING(exp, n)       EB_WARNING("[GATT] ", exp, n)
+#define EB_GATT_INFO(fmt, ...)        EB_INFO("[GATT] ", fmt, ##__VA_ARGS__)
+#define EB_GATT_DUMP(msg, buf, len)   EB_DUMP("[GATT] ", msg, buf, len)
+
+#define EB_GATT_MSG_MALLOC            EB_RB_MALLOC
+#define EB_GATT_MSG_FREE              EB_RB_FREE
+#define EB_GATT_ENV_MALLOC            EB_ENV_MALLOC
+#define EB_GATT_ENV_FREE              EB_ENV_FREE
 
 #undef MIN
 #define MIN(a,b) ((a)<(b)?(a):(b))
@@ -23,7 +33,6 @@ enum req_status {
 };
 
 struct eb_gatt_conn {
-    uint16_t conn_hdl;
     uint16_t mtu;
     uint8_t conn_idx  : 4;
     uint8_t sec_level : 4; // @ref enum eb_gatt_sec_level
@@ -54,31 +63,28 @@ struct eb_gatt {
 void *eb_gatt_init(void *gatt_buf, struct eb_gatt_param *param)
 {
     struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
-    EB_GATT_ASSERT(param);
-    EB_GATT_ASSERT(param->send);
-    EB_GATT_ASSERT(param->connected);
-    EB_GATT_ASSERT(param->disconnected);
-    EB_GATT_ASSERT(param->proc);
-    int max_connection = param->max_connection ? param->max_connection : EB_GATT_DEF_CONN_NUM;
-    max_connection = max_connection < EB_GATT_MAX_CONN_NUM ? max_connection : EB_GATT_MAX_CONN_NUM;
-    int max_mtu = EB_GATT_DEF_MTU > param->max_mtu ? EB_GATT_DEF_MTU : param->max_mtu;
-    max_mtu = max_mtu < EB_GATT_MAX_MTU ? max_mtu : EB_GATT_MAX_MTU;
+    EB_GATT_ERROR(param, 0);
+    EB_GATT_ERROR(param->send, 0);
+    EB_GATT_ERROR(param->connected, 0);
+    EB_GATT_ERROR(param->disconnected, 0);
+    EB_GATT_ERROR(param->proc, 0);
     int max_write_cache = param->max_mtu ? param->max_mtu : EB_GATT_MAX_MTU;
     gatt->send = param->send;
     gatt->connected = param->connected;
     gatt->disconnected = param->disconnected;
     gatt->proc = param->proc;
-    gatt->max_connection = max_connection;
-    gatt->max_mtu = max_mtu;
-    gatt->max_write_cache = max_write_cache;
-    // eb_att_db_init(&gatt->default_db); TODO
+    gatt->default_db = param->default_db;
+    gatt->max_connection = param->max_connection;
+    gatt->max_mtu = param->max_mtu;
+    gatt->max_write_cache = param->max_write_cache;
     int i;
     for (i = 0; i < gatt->max_connection; i++) {
         memset(&gatt->conn[i], 0, sizeof(struct eb_gatt_conn));
-        gatt->conn[i].conn_idx = i;
-        gatt->conn[i].conn_hdl = EB_GATT_INVALID_CONN_HDL;
-        gatt->conn[i].write_cache = (uint8_t *)EB_GATT_MALLOC(gatt->max_write_cache);
-        EB_GATT_ASSERT(gatt->conn[i].write_cache);
+        gatt->conn[i].conn_idx = EB_GATT_INVALID_CONN_IDX;
+        if (gatt->max_write_cache) {
+            gatt->conn[i].write_cache = (uint8_t *)EB_GATT_ENV_MALLOC(gatt->max_write_cache);
+        }
+        EB_GATT_ERROR(gatt->conn[i].write_cache, 0);
         memset(gatt->conn[i].write_cache, 0, gatt->max_write_cache);
     }
     return gatt;
@@ -125,7 +131,7 @@ void eb_gatts_pending_request(void *gatt_buf, uint16_t conn_idx)
         if (conn->server_pending_st == ST_AUTO_RESPONSE) {
             conn->server_pending_st = ST_PENDING_RESPONSE;
         } else {
-            EB_GATT_WARNING(0);
+            EB_GATT_WARNING(0, 0);
         }
     }
 }
@@ -140,7 +146,7 @@ struct send_done {
 static void send_done_cb(void *p)
 {
     struct send_done *sd = (struct send_done *)p;
-    EB_GATT_ASSERT(sd);
+    EB_GATT_ERROR(sd, 0);
     struct gatt_param param = {
         .evt_id = EB_GATT_CMP,
         .status = ATT_ERR_NO_ERROR,
@@ -149,7 +155,7 @@ static void send_done_cb(void *p)
     if (eb_gatt_get_by_conn_idx(sd->gatt, sd->conn_idx)) {
         sd->gatt->proc(sd->conn_idx, &param);
     }
-    EB_GATT_FREE(sd);
+    EB_GATT_MSG_FREE(sd);
 }
 
 static void gatt_error_rsp(void *gatt_buf, uint16_t conn_idx, uint8_t req_code, uint16_t handle,
@@ -172,7 +178,7 @@ void eb_gatts_read_response(void *gatt_buf, uint16_t conn_idx, uint8_t att_state
         if (conn->server_pending_st != ST_NO_RESPONSE) {
             if (conn->server_pending_op != ATT_READ_REQ && conn->server_pending_op != ATT_READ_BLOB_REQ) {
                 // Pending opcode not read or blob read
-                EB_GATT_WARNING(0);
+                EB_GATT_WARNING(0, 0);
                 return;
             }
             if (len > conn->mtu - sizeof(struct att_read_rsp)) {
@@ -199,7 +205,7 @@ void eb_gatts_read_response(void *gatt_buf, uint16_t conn_idx, uint8_t att_state
             }
         } else {
             // No read request pending
-            EB_GATT_WARNING(0);
+            EB_GATT_WARNING(0, 0);
         }
     }
 }
@@ -221,7 +227,7 @@ void eb_gatts_write_response(void *gatt_buf, uint16_t conn_idx, uint8_t att_stat
                     att.execute_write_rsp.opcode = ATT_EXECUTE_WRITE_RSP;
                     rsp_len = sizeof(struct att_execute_write_rsp);
                 } else {
-                    EB_GATT_WARNING(0);
+                    EB_GATT_WARNING(0, 0);
                     return;
                 }
                 gatt->send(conn_idx, (uint8_t *)&att, rsp_len, NULL, NULL);
@@ -230,7 +236,7 @@ void eb_gatts_write_response(void *gatt_buf, uint16_t conn_idx, uint8_t att_stat
             }
         } else {
             // No write request pending
-            EB_GATT_WARNING(0);
+            EB_GATT_WARNING(0, 0);
         }
     }
 }
@@ -243,7 +249,7 @@ void eb_gatts_send_event(void *gatt_buf, struct eb_gatts_event *evt)
     att->opcode = evt->type != EB_GATT_NOTIFY ? ATT_HANDLE_VALUE_NTF : ATT_HANDLE_VALUE_IND;
     att->handle_value_ntf.handle = evt->att_hdl;
     memcpy(att->handle_value_ntf.data, evt->data, evt->len);
-    struct send_done *sd = (struct send_done *)EB_GATT_MALLOC(sizeof(struct send_done));
+    struct send_done *sd = (struct send_done *)EB_GATT_MSG_MALLOC(sizeof(struct send_done));
     sd->gatt = gatt;
     sd->conn_idx = evt->conn_idx;
     sd->att_opcode = att->opcode;
@@ -258,7 +264,7 @@ void eb_gattc_mtu_req(void *gatt_buf, uint16_t conn_idx)
     uint8_t data[EB_GATT_MAX_MTU];
     struct att_packet *att = (struct att_packet *)data;
     att->opcode = ATT_EXCHANGE_MTU_REQ;
-    struct send_done *sd = (struct send_done *)EB_GATT_MALLOC(sizeof(struct send_done));
+    struct send_done *sd = (struct send_done *)EB_GATT_MSG_MALLOC(sizeof(struct send_done));
     sd->gatt = gatt;
     sd->conn_idx = conn_idx;
     sd->att_opcode = att->opcode;
@@ -406,8 +412,8 @@ static int gatt_read_by_type_req_cb(uint16_t handle, const struct eb_att_serv *s
         return EB_ATT_SEARCH_EXIT;
     }
     if (item && p->req_uuid_len == item->uuid->uuid_len && !memcmp(item->uuid->uuid, p->req->uuid, p->req_uuid_len)) {
-        if (EB_UUID_EQ(item->uuid, &eb_att_incl_def)) {
-        } else if (EB_UUID_EQ(item->uuid, &eb_att_char_def)) {
+        if (EB_UUID_CMP(item->uuid, &eb_att_incl_def)) {
+        } else if (EB_UUID_CMP(item->uuid, &eb_att_char_def)) {
             const struct eb_uuid *value_uuid = (item + 1)->uuid;
             if (rsp->length == 0) {
                 rsp->length = 5 + value_uuid->uuid_len;
@@ -731,7 +737,7 @@ static int gatt_write_req_cb(uint16_t handle, const struct eb_att_serv *serv, co
         // Check if need auto response
         if (p->conn->server_pending_st == ST_AUTO_RESPONSE) {
             struct att_packet rsp;
-            EB_GATT_ASSERT(p->att->opcode == ATT_WRITE_REQ);
+            EB_GATT_ERROR(p->att->opcode == ATT_WRITE_REQ, p->att->opcode);
             rsp.write_rsp.opcode = ATT_WRITE_RSP;
             p->gatt->send(p->conn_idx, (uint8_t *)&rsp, sizeof(struct att_write_rsp), NULL, NULL);
             p->conn->server_pending_st = ST_NO_RESPONSE;
@@ -827,7 +833,7 @@ static bool att_execute_write_req_proc(struct eb_gatt_conn *conn, const uint8_t 
     // Check if need auto response
     if (conn->server_pending_st == ST_AUTO_RESPONSE) {
         struct att_packet rsp;
-        EB_GATT_ASSERT(att->opcode == ATT_EXECUTE_WRITE_REQ);
+        EB_GATT_ERROR(att->opcode == ATT_EXECUTE_WRITE_REQ, att->opcode);
         rsp.execute_write_rsp.opcode = ATT_EXECUTE_WRITE_RSP;
         gatt->send(conn->conn_idx, (uint8_t *)&rsp, sizeof(struct att_execute_write_rsp), NULL, NULL);
         conn->server_pending_st = ST_NO_RESPONSE;
@@ -908,7 +914,7 @@ const static struct {
     {           ATT_SIGNED_WRITE_CMD,           att_signed_write_cmd_proc },
 };
 
-void eb_gattp_received(void *gatt_buf, uint16_t conn_idx, uint8_t *payload, uint16_t datalen)
+void eb_pgatt_received(void *gatt_buf, uint16_t conn_idx, uint8_t *payload, uint16_t datalen)
 {
     struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
     struct att_packet *att = (struct att_packet *)payload;
@@ -928,20 +934,20 @@ void eb_gattp_received(void *gatt_buf, uint16_t conn_idx, uint8_t *payload, uint
     }
 }
 
-void eb_gattp_connected(void *gatt_buf, uint16_t conn_idx)
+void eb_pgatt_connected(void *gatt_buf, uint16_t conn_idx)
 {
     struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
     if (!eb_gatt_get_by_conn_idx(gatt, conn_idx)) {
         int i;
         for (i = 0; i < gatt->max_connection; i++) {
-            if (gatt->conn[i].conn_hdl == EB_GATT_INVALID_CONN_HDL) {
+            if (gatt->conn[i].conn_idx == EB_GATT_INVALID_CONN_IDX) {
                 gatt->conn[i].conn_idx = conn_idx;
                 gatt->conn[i].mtu = EB_GATT_DEF_MTU;
                 gatt->conn[i].sec_level = EB_GATT_SEC_NO_SEC;
                 gatt->conn[i].server_pending_st = ST_NO_RESPONSE;
                 gatt->conn[i].server_pending_op = EB_GATT_ATT_OPCODE_NONE;
                 gatt->conn[i].client_pending_op = EB_GATT_ATT_OPCODE_NONE;
-                gatt->conn[i].custom_db = &gatt->default_db;
+                gatt->conn[i].custom_db = gatt->default_db;
                 memset(gatt->conn[i].write_cache, 0, gatt->max_write_cache);
                 gatt->conn[i].write_cache_handle = 0x0;
                 gatt->conn[i].write_cache_len = 0;
@@ -952,17 +958,17 @@ void eb_gattp_connected(void *gatt_buf, uint16_t conn_idx)
     }
 }
 
-void eb_gattp_disconnected(void *gatt_buf, uint16_t conn_idx)
+void eb_pgatt_disconnected(void *gatt_buf, uint16_t conn_idx)
 {
     struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
     struct eb_gatt_conn *conn = eb_gatt_get_by_conn_idx(gatt, conn_idx);
     if (conn) {
-        conn->conn_hdl = EB_GATT_INVALID_CONN_HDL;
+        conn->conn_idx = EB_GATT_INVALID_CONN_IDX;
         gatt->disconnected(conn_idx);
     }
 }
 
-void eb_gattp_sec_changed(void *gatt_buf, uint16_t conn_idx, uint8_t sec_lvl)
+void eb_pgatt_sec_changed(void *gatt_buf, uint16_t conn_idx, uint8_t sec_lvl)
 {
     struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
     struct eb_gatt_conn *conn = eb_gatt_get_by_conn_idx(gatt, conn_idx);
