@@ -5,12 +5,11 @@
 #include "eb_config.h"
 #include "eb_att.h"
 
+#define EB_GATT_INVALID_HANDLE  0x0000
 #define EB_GATT_MALLOC  malloc
 #define EB_GATT_FREE    free
 #define EB_GATT_ASSERT  assert
 #define EB_GATT_WARNING(x) do{if(!(x)){printf("Warning: %s@%d\n", __func__, __LINE__);}}while(0)
-
-struct eb_gatt;
 
 enum eb_gatt_sec_level {
     EB_GATT_SEC_NO_SEC,
@@ -67,22 +66,30 @@ struct gatt_param {
         } read_rsp;
     };
 };
-struct eb_gatt_cfg {
-    void (*send)(uint16_t conn_hdl, uint8_t *data, int len, void(*send_done)(void *), void *p, void *usr_data);
-    void (*connected)(uint16_t conn_hdl, void *usr_data);
-    void (*disconnected)(uint16_t conn_hdl, void *usr_data);
-    void (*proc)(uint16_t conn_hdl, struct gatt_param *param, void *usr_data);
+struct eb_gatt_param {
+    void (*send)(uint16_t conn_idx, uint8_t *data, int len, void(*send_done)(void *), void *p);
+    void (*proc)(uint16_t conn_idx, struct gatt_param *param);
+    void (*connected)(uint16_t conn_idx);
+    void (*disconnected)(uint16_t conn_idx);
     uint16_t max_mtu;
     uint16_t max_connection;
-    uint16_t max_write_cache; // 0 means set to max supported mtu
+    uint16_t max_write_cache; // 0 means use write offset
 };
-struct eb_gatt *eb_gatt_init(struct eb_gatt_cfg *cfg, void *usr_data);
+void* eb_gatt_init(void *gatt, struct eb_gatt_param *param);
+void eb_gatt_size(uint8_t max_connection, uint16_t max_service_num, uint16_t max_write_cache);
+
+struct eb_gatt_cfg;
+extern const struct eb_gatt_cfg *eb_gatt_cfg_none;
+extern const struct eb_gatt_cfg *eb_gatt_cfg_client_only;
+extern const struct eb_gatt_cfg *eb_gatt_cfg_server_only;
+extern const struct eb_gatt_cfg *eb_gatt_cfg_server_client;
+void eb_gatt_configure(const struct eb_gatt_cfg *cfg); // select a const configuration
 
 /*******************************************************************************
  * Set custom att database, ONLY can be called in connected callback
- * @prarm    att_db       att database
+ * @prarm    att_db       att database created by eb_att_db_init
  ******************************************************************************/
-void eb_gatts_set_custom_db(struct eb_gatt *gatt, uint16_t conn_hdl, const struct eb_att_db *att_db);
+void eb_gatts_set_custom_db(void *gatt, uint16_t conn_idx, const void *att_db);
 
 /*******************************************************************************
  * Add att service to default database
@@ -90,12 +97,12 @@ void eb_gatts_set_custom_db(struct eb_gatt *gatt, uint16_t conn_hdl, const struc
  * @reutrn   start handle of the added service
  * @warning  att_serv and it's related items MUST be static variables
  ******************************************************************************/
-int eb_gatts_add_service(struct eb_gatt *gatt, const struct eb_att_serv *att_serv);
+int eb_gatts_add_service(void *gatt, const struct eb_att_serv *att_serv);
 
 /*******************************************************************************
  * Don't response the client request(etc. read, write)
  ******************************************************************************/
-void eb_gatts_pending_request(struct eb_gatt *gatt, uint16_t conn_hdl);
+void eb_gatts_pending_request(void *gatt, uint16_t conn_idx);
 
 /*******************************************************************************
  * Send notify or indicate to GATT client
@@ -107,31 +114,31 @@ enum eb_gatt_evt_type {
 };
 struct eb_gatts_event {
     uint8_t type; // @ref enum eb_gatt_evt_type
-    uint16_t conn_hdl;
+    uint16_t conn_idx;
     uint16_t att_hdl;
     uint8_t *data;
     int len;
     uint8_t seq_num;
 };
-void eb_gatts_send_event(struct eb_gatt *gatt, struct eb_gatts_event *evt);
-void eb_gatts_read_response(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t att_state, uint8_t *data, uint16_t len);
-void eb_gatts_write_response(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t att_state);
-void eb_gattc_mtu_req(struct eb_gatt *gatt, uint16_t conn_hdl);
-void eb_gattc_find_service(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t start_handl, uint16_t end_handle,
+void eb_gatts_send_event(void *gatt, struct eb_gatts_event *evt);
+void eb_gatts_read_response(void *gatt, uint16_t conn_idx, uint8_t att_state, uint8_t *data, uint16_t len);
+void eb_gatts_write_response(void *gatt, uint16_t conn_idx, uint8_t att_state);
+void eb_gattc_mtu_req(void *gatt, uint16_t conn_idx);
+void eb_gattc_find_service(void *gatt, uint16_t conn_idx, uint16_t start_handl, uint16_t end_handle,
                            struct eb_uuid *uuid);
-void eb_gattc_find_characteristic(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t start_handl, uint16_t end_handle,
+void eb_gattc_find_characteristic(void *gatt, uint16_t conn_idx, uint16_t start_handl, uint16_t end_handle,
                                   struct eb_uuid *uuid);
-void eb_gattc_find_descriptor(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t start_handl, uint16_t end_handle);
-void eb_gattc_read(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t att_hdl, uint16_t offset);
-void eb_gattc_write(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t att_hdl, uint8_t type, const uint8_t *data,
+void eb_gattc_find_descriptor(void *gatt, uint16_t conn_idx, uint16_t start_handl, uint16_t end_handle);
+void eb_gattc_read(void *gatt, uint16_t conn_idx, uint16_t att_hdl, uint16_t offset);
+void eb_gattc_write(void *gatt, uint16_t conn_idx, uint16_t att_hdl, uint8_t type, const uint8_t *data,
                     int len);
-void eb_gattc_ind_cfm(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t att_hdl);
+void eb_gattc_ind_cfm(void *gatt, uint16_t conn_idx, uint16_t att_hdl);
 
 // porting
-void eb_gattp_received(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t *payload, uint16_t datalen);
-void eb_gattp_connected(struct eb_gatt *gatt, uint16_t conn_hdl);
-void eb_gattp_disconnected(struct eb_gatt *gatt, uint16_t conn_hdl);
-void eb_gattp_sec_changed(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t sec_lvl);
+void eb_pgatt_received(void *gatt, uint16_t conn_idx, uint8_t *payload, uint16_t datalen);
+void eb_pgatt_connected(void *gatt, uint16_t conn_idx);
+void eb_pgatt_disconnected(void *gatt, uint16_t conn_idx);
+void eb_pgatt_sec_changed(void *gatt, uint16_t conn_idx, uint8_t sec_lvl);
 
 #endif /* __EB_GATT_H__ */
 

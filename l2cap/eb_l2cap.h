@@ -30,8 +30,6 @@ enum {
     EB_L2CAP_DBG_ERR_UNSPE,
 };
 
-struct eb_l2cap;
-
 struct eb_l2cap_send_data {
     uint8_t conn_idx;
     uint8_t seq_num; // 0 means no callback
@@ -54,14 +52,14 @@ struct eb_l2cap_callbacks {
                          uint8_t *local_addr, uint8_t local_addr_type);
     void (*disconnected_cb)(uint8_t conn_idx);
 };
-struct eb_l2cap_cfg {
+struct eb_l2cap_param {
     const struct eb_l2cap_callbacks *cb;
     uint16_t acl_data_packet_length;
     uint8_t total_num_le_acl_data_packets; // 1~16
     uint8_t max_connection; // 1~16
     uint16_t max_recv_buf_len; // 必须4字节对齐
 };
-struct eb_l2cap *eb_l2cap_init(struct eb_l2cap *l2cap, struct eb_l2cap_cfg *cfg);
+void eb_l2cap_init(void *l2cap, struct eb_l2cap_param *cfg);
 
 /*******************************************************************************
  * 返回初始化 struct eb_l2cap 结构体所需的长度
@@ -75,27 +73,27 @@ int eb_l2cap_size(int max_connection, int max_recv_buf_len);
  * @data data由上层分配内存，且必须在该地址前保留12字节可写空间，
  * data在使用完成后可以在send_done_cb回调函数中释放
  ******************************************************************************/
-void eb_l2cap_send(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *data);
+void eb_l2cap_send(void *l2cap, struct eb_l2cap_send_data *data);
 
-struct eb_l2cap_func;
-extern const struct eb_l2cap_func *eb_l2cap_cfg_acl_reasm_multi_link;
-extern const struct eb_l2cap_func *eb_l2cap_cfg_acl_noreasm_multi_link;
-extern const struct eb_l2cap_func *eb_l2cap_cfg_acl_reasm_single_link;
-extern const struct eb_l2cap_func *eb_l2cap_cfg_acl_noreasm_single_link;
-void eb_l2cap_func_cfg(const struct eb_l2cap_func *cfg); // select a const configuration
+struct eb_l2cap_cfg;
+extern const struct eb_l2cap_cfg *eb_l2cap_cfg_acl_reasm_multi_link;
+extern const struct eb_l2cap_cfg *eb_l2cap_cfg_acl_noreasm_multi_link;
+extern const struct eb_l2cap_cfg *eb_l2cap_cfg_acl_reasm_single_link;
+extern const struct eb_l2cap_cfg *eb_l2cap_cfg_acl_noreasm_single_link;
+void eb_l2cap_configure(const struct eb_l2cap_cfg *cfg); // select a const configuration
 
-void eb_pl2cap_received(struct eb_l2cap *l2cap, uint8_t conn_idx, uint16_t hdl_flags, uint16_t datalen, uint8_t *payload);
-void eb_pl2cap_connected(struct eb_l2cap *l2cap, uint8_t conn_idx, uint16_t conn_hdl, uint8_t role,
+void eb_pl2cap_received(void *l2cap, uint8_t conn_idx, uint16_t hdl_flags, uint16_t datalen, uint8_t *payload);
+void eb_pl2cap_connected(void *l2cap, uint8_t conn_idx, uint16_t conn_hdl, uint8_t role,
                          uint8_t *peer_addr, uint8_t peer_addr_type, uint8_t *local_addr, uint8_t local_addr_type);
-void eb_pl2cap_disconnected(struct eb_l2cap *l2cap, uint8_t conn_idx);
-void eb_pl2cap_acl_cfg(struct eb_l2cap *l2cap, uint16_t pkg_size, int pkg_num);
-void eb_pl2cap_packets_completed(struct eb_l2cap *l2cap, uint8_t conn_idx, int pkg_num);
+void eb_pl2cap_disconnected(void *l2cap, uint8_t conn_idx);
+void eb_pl2cap_acl_cfg(void *l2cap, uint16_t pkg_size, int pkg_num);
+void eb_pl2cap_packets_completed(void *l2cap, uint8_t conn_idx, int pkg_num);
 
 /*******************************************************************************
  * schedule once for sending buffer data to controller
  * @param l2cap module of l2cap
  ******************************************************************************/
-void eb_l2cap_sche_once(struct eb_l2cap *l2cap);
+void eb_l2cap_sche_once(void *l2cap);
 
 #endif /* __EB_L2CAP__ */
 

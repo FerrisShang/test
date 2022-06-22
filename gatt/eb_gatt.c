@@ -40,11 +40,10 @@ struct eb_gatt_conn {
 };
 
 struct eb_gatt {
-    void (*send)(uint16_t conn_hdl, uint8_t *data, int len, void(*send_done)(void *), void *p, void *usr_data);
-    void (*connected)(uint16_t conn_hdl, void *usr_data);
-    void (*disconnected)(uint16_t conn_hdl, void *usr_data);
-    void (*proc)(uint16_t conn_hdl, struct gatt_param *param, void *usr_data);
-    void *usr_data;
+    void (*send)(uint16_t conn_idx, uint8_t *data, int len, void(*send_done)(void *), void *p);
+    void (*connected)(uint16_t conn_idx);
+    void (*disconnected)(uint16_t conn_idx);
+    void (*proc)(uint16_t conn_idx, struct gatt_param *param);
     void *default_db;
     uint16_t max_mtu;
     uint16_t max_connection;
@@ -52,28 +51,27 @@ struct eb_gatt {
     struct eb_gatt_conn conn[0];
 };
 
-struct eb_gatt *eb_gatt_init(struct eb_gatt_cfg *cfg, void *usr_data)
+void *eb_gatt_init(void *gatt_buf, struct eb_gatt_param *param)
 {
-    EB_GATT_ASSERT(cfg);
-    EB_GATT_ASSERT(cfg->send);
-    EB_GATT_ASSERT(cfg->connected);
-    EB_GATT_ASSERT(cfg->disconnected);
-    EB_GATT_ASSERT(cfg->proc);
-    int max_connection = cfg->max_connection ? cfg->max_connection : EB_GATT_DEF_CONN_NUM;
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
+    EB_GATT_ASSERT(param);
+    EB_GATT_ASSERT(param->send);
+    EB_GATT_ASSERT(param->connected);
+    EB_GATT_ASSERT(param->disconnected);
+    EB_GATT_ASSERT(param->proc);
+    int max_connection = param->max_connection ? param->max_connection : EB_GATT_DEF_CONN_NUM;
     max_connection = max_connection < EB_GATT_MAX_CONN_NUM ? max_connection : EB_GATT_MAX_CONN_NUM;
-    int max_mtu = EB_GATT_DEF_MTU > cfg->max_mtu ? EB_GATT_DEF_MTU : cfg->max_mtu;
+    int max_mtu = EB_GATT_DEF_MTU > param->max_mtu ? EB_GATT_DEF_MTU : param->max_mtu;
     max_mtu = max_mtu < EB_GATT_MAX_MTU ? max_mtu : EB_GATT_MAX_MTU;
-    int max_write_cache = cfg->max_mtu ? cfg->max_mtu : EB_GATT_MAX_MTU;
-    struct eb_gatt *gatt = (struct eb_gatt *)EB_GATT_MALLOC(sizeof(struct eb_gatt) +
-                                                            sizeof(struct eb_gatt_conn) * max_connection);
-    gatt->send = cfg->send;
-    gatt->connected = cfg->connected;
-    gatt->disconnected = cfg->disconnected;
-    gatt->proc = cfg->proc;
+    int max_write_cache = param->max_mtu ? param->max_mtu : EB_GATT_MAX_MTU;
+    gatt->send = param->send;
+    gatt->connected = param->connected;
+    gatt->disconnected = param->disconnected;
+    gatt->proc = param->proc;
     gatt->max_connection = max_connection;
     gatt->max_mtu = max_mtu;
     gatt->max_write_cache = max_write_cache;
-    eb_att_db_init(&gatt->default_db);
+    // eb_att_db_init(&gatt->default_db); TODO
     int i;
     for (i = 0; i < gatt->max_connection; i++) {
         memset(&gatt->conn[i], 0, sizeof(struct eb_gatt_conn));
@@ -92,33 +90,37 @@ static struct eb_gatt *eb_gatt_get_by_conn(struct eb_gatt_conn *conn)
     return (struct eb_gatt *)((size_t)conn - offsetof(struct eb_gatt, conn));
 }
 
-static struct eb_gatt_conn *eb_gatt_get_by_conn_hdl(struct eb_gatt *gatt, uint16_t conn_hdl)
+static struct eb_gatt_conn *eb_gatt_get_by_conn_idx(void *gatt_buf, uint16_t conn_idx)
 {
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
     int i;
     for (i = 0; i < gatt->max_connection; i++) {
-        if (gatt->conn[i].conn_hdl == conn_hdl) {
+        if (gatt->conn[i].conn_idx == conn_idx) {
             return &gatt->conn[i];
         }
     }
     return NULL;
 }
 
-void eb_gatts_set_custom_db(struct eb_gatt *gatt, uint16_t conn_hdl, const struct eb_att_db *att_db)
+void eb_gatts_set_custom_db(void *gatt_buf, uint16_t conn_idx, const void *att_db)
 {
-    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_hdl(gatt, conn_hdl);
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
+    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_idx(gatt, conn_idx);
     if (conn) {
         conn->custom_db = att_db;
     }
 }
 
-int eb_gatts_add_service(struct eb_gatt *gatt, const struct eb_att_serv *att_serv)
+int eb_gatts_add_service(void *gatt_buf, const struct eb_att_serv *att_serv)
 {
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
     return eb_att_db_add(&gatt->default_db, att_serv);
 }
 
-void eb_gatts_pending_request(struct eb_gatt *gatt, uint16_t conn_hdl)
+void eb_gatts_pending_request(void *gatt_buf, uint16_t conn_idx)
 {
-    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_hdl(gatt, conn_hdl);
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
+    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_idx(gatt, conn_idx);
     if (conn) {
         if (conn->server_pending_st == ST_AUTO_RESPONSE) {
             conn->server_pending_st = ST_PENDING_RESPONSE;
@@ -130,7 +132,7 @@ void eb_gatts_pending_request(struct eb_gatt *gatt, uint16_t conn_hdl)
 
 struct send_done {
     struct eb_gatt *gatt;
-    uint16_t conn_hdl;
+    uint16_t conn_idx;
     uint8_t att_opcode;
     uint16_t seq_num;
 };
@@ -144,26 +146,28 @@ static void send_done_cb(void *p)
         .status = ATT_ERR_NO_ERROR,
         .complete.att_opcode = sd->att_opcode,
     };
-    if (eb_gatt_get_by_conn_hdl(sd->gatt, sd->conn_hdl)) {
-        sd->gatt->proc(sd->conn_hdl, &param, sd->gatt->usr_data);
+    if (eb_gatt_get_by_conn_idx(sd->gatt, sd->conn_idx)) {
+        sd->gatt->proc(sd->conn_idx, &param);
     }
     EB_GATT_FREE(sd);
 }
 
-static void gatt_error_rsp(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t req_code, uint16_t handle,
+static void gatt_error_rsp(void *gatt_buf, uint16_t conn_idx, uint8_t req_code, uint16_t handle,
                            uint16_t err_code)
 {
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
     struct att_packet att;
     att.error_rsp.opcode = ATT_ERROR_RSP;
     att.error_rsp.req_opcode = req_code;
     att.error_rsp.handle = handle;
     att.error_rsp.error_code = err_code;
-    gatt->send(conn_hdl, (uint8_t *)&att, sizeof(struct att_error_rsp), NULL, NULL, gatt->usr_data);
+    gatt->send(conn_idx, (uint8_t *)&att, sizeof(struct att_error_rsp), NULL, NULL);
 }
 
-void eb_gatts_read_response(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t att_state, uint8_t *data, uint16_t len)
+void eb_gatts_read_response(void *gatt_buf, uint16_t conn_idx, uint8_t att_state, uint8_t *data, uint16_t len)
 {
-    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_hdl(gatt, conn_hdl);
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
+    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_idx(gatt, conn_idx);
     if (conn) {
         if (conn->server_pending_st != ST_NO_RESPONSE) {
             if (conn->server_pending_op != ATT_READ_REQ && conn->server_pending_op != ATT_READ_BLOB_REQ) {
@@ -189,9 +193,9 @@ void eb_gatts_read_response(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t att
                     memcpy(p->read_blob_rsp.data, data, len);
                     rsp_len = sizeof(struct att_read_blob_rsp) + len;
                 }
-                gatt->send(conn_hdl, (uint8_t *)p, rsp_len, NULL, NULL, gatt->usr_data);
+                gatt->send(conn_idx, (uint8_t *)p, rsp_len, NULL, NULL);
             } else {
-                gatt_error_rsp(gatt, conn_hdl, conn->server_pending_op, conn->server_pending_hdl, att_state);
+                gatt_error_rsp(gatt, conn_idx, conn->server_pending_op, conn->server_pending_hdl, att_state);
             }
         } else {
             // No read request pending
@@ -200,9 +204,10 @@ void eb_gatts_read_response(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t att
     }
 }
 
-void eb_gatts_write_response(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t att_state)
+void eb_gatts_write_response(void *gatt_buf, uint16_t conn_idx, uint8_t att_state)
 {
-    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_hdl(gatt, conn_hdl);
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
+    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_idx(gatt, conn_idx);
     if (conn) {
         if (conn->server_pending_st != ST_NO_RESPONSE) {
             conn->server_pending_st = ST_NO_RESPONSE;
@@ -219,9 +224,9 @@ void eb_gatts_write_response(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t at
                     EB_GATT_WARNING(0);
                     return;
                 }
-                gatt->send(conn_hdl, (uint8_t *)&att, rsp_len, NULL, NULL, gatt->usr_data);
+                gatt->send(conn_idx, (uint8_t *)&att, rsp_len, NULL, NULL);
             } else {
-                gatt_error_rsp(gatt, conn_hdl, conn->server_pending_op, conn->server_pending_hdl, att_state);
+                gatt_error_rsp(gatt, conn_idx, conn->server_pending_op, conn->server_pending_hdl, att_state);
             }
         } else {
             // No write request pending
@@ -230,8 +235,9 @@ void eb_gatts_write_response(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t at
     }
 }
 
-void eb_gatts_send_event(struct eb_gatt *gatt, struct eb_gatts_event *evt)
+void eb_gatts_send_event(void *gatt_buf, struct eb_gatts_event *evt)
 {
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
     uint8_t data[EB_GATT_MAX_MTU];
     struct att_packet *att = (struct att_packet *)data;
     att->opcode = evt->type != EB_GATT_NOTIFY ? ATT_HANDLE_VALUE_NTF : ATT_HANDLE_VALUE_IND;
@@ -239,50 +245,51 @@ void eb_gatts_send_event(struct eb_gatt *gatt, struct eb_gatts_event *evt)
     memcpy(att->handle_value_ntf.data, evt->data, evt->len);
     struct send_done *sd = (struct send_done *)EB_GATT_MALLOC(sizeof(struct send_done));
     sd->gatt = gatt;
-    sd->conn_hdl = evt->conn_hdl;
+    sd->conn_idx = evt->conn_idx;
     sd->att_opcode = att->opcode;
     sd->seq_num = evt->seq_num;
-    gatt->send(evt->conn_hdl, data, sizeof(struct att_handle_value_ntf) + evt->len,
-               send_done_cb, sd, gatt->usr_data);
+    gatt->send(evt->conn_idx, data, sizeof(struct att_handle_value_ntf) + evt->len,
+               send_done_cb, sd);
 }
 
-void eb_gattc_mtu_req(struct eb_gatt *gatt, uint16_t conn_hdl)
+void eb_gattc_mtu_req(void *gatt_buf, uint16_t conn_idx)
 {
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
     uint8_t data[EB_GATT_MAX_MTU];
     struct att_packet *att = (struct att_packet *)data;
     att->opcode = ATT_EXCHANGE_MTU_REQ;
     struct send_done *sd = (struct send_done *)EB_GATT_MALLOC(sizeof(struct send_done));
     sd->gatt = gatt;
-    sd->conn_hdl = conn_hdl;
+    sd->conn_idx = conn_idx;
     sd->att_opcode = att->opcode;
     sd->seq_num = 0xFFFF;
-    gatt->send(conn_hdl, data, sizeof(struct att_exchange_mtu_req), send_done_cb, sd, gatt->usr_data);
+    gatt->send(conn_idx, data, sizeof(struct att_exchange_mtu_req), send_done_cb, sd);
 }
 
-void eb_gattc_find_service(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t start_handl, uint16_t end_handle,
+void eb_gattc_find_service(void *gatt_buf, uint16_t conn_idx, uint16_t start_handl, uint16_t end_handle,
                            struct eb_uuid *uuid)
 {
 }
 
-void eb_gattc_find_characteristic(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t start_handl, uint16_t end_handle,
+void eb_gattc_find_characteristic(void *gatt_buf, uint16_t conn_idx, uint16_t start_handl, uint16_t end_handle,
                                   struct eb_uuid *uuid)
 {
 }
 
-void eb_gattc_find_descriptor(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t start_handl, uint16_t end_handle)
+void eb_gattc_find_descriptor(void *gatt_buf, uint16_t conn_idx, uint16_t start_handl, uint16_t end_handle)
 {
 }
 
-void eb_gattc_read(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t att_hdl, uint16_t offset)
+void eb_gattc_read(void *gatt_buf, uint16_t conn_idx, uint16_t att_hdl, uint16_t offset)
 {
 }
 
-void eb_gattc_write(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t att_hdl, uint8_t type, const uint8_t *data,
+void eb_gattc_write(void *gatt_buf, uint16_t conn_idx, uint16_t att_hdl, uint8_t type, const uint8_t *data,
                     int len)
 {
 }
 
-void eb_gattc_ind_cfm(struct eb_gatt *gatt, uint16_t conn_hdl, uint16_t att_hdl)
+void eb_gattc_ind_cfm(void *gatt_buf, uint16_t conn_idx, uint16_t att_hdl)
 {
 }
 
@@ -296,14 +303,14 @@ static bool att_exchange_mtu_req_proc(struct eb_gatt_conn *conn, const uint8_t *
     struct att_packet *req_att = (struct att_packet *)payload, rsp_att;
     rsp_att.exchange_mtu_rsp.mtu = gatt->max_mtu;
     rsp_att.exchange_mtu_rsp.opcode = ATT_EXCHANGE_MTU_RSP;
-    gatt->send(conn->conn_hdl, (uint8_t *)&rsp_att, sizeof(struct att_exchange_mtu_rsp), NULL, NULL, gatt->usr_data);
+    gatt->send(conn->conn_idx, (uint8_t *)&rsp_att, sizeof(struct att_exchange_mtu_rsp), NULL, NULL);
     conn->mtu = MIN(gatt->max_mtu, req_att->exchange_mtu_req.mtu);
     struct gatt_param param = {
         .evt_id = EB_GATT_MTU_CHANGED_IND,
         .status = ATT_ERR_NO_ERROR,
         .mtu_changed.mtu = conn->mtu,
     };
-    gatt->proc(conn->conn_hdl, &param, gatt->usr_data);
+    gatt->proc(conn->conn_idx, &param);
     return true;
 }
 static bool att_exchange_mtu_rsp_proc(struct eb_gatt_conn *conn, const uint8_t *payload, uint16_t datalen)
@@ -316,7 +323,7 @@ static bool att_exchange_mtu_rsp_proc(struct eb_gatt_conn *conn, const uint8_t *
         .status = ATT_ERR_NO_ERROR,
         .mtu_changed.mtu = conn->mtu,
     };
-    gatt->proc(conn->conn_hdl, &param, gatt->usr_data);
+    gatt->proc(conn->conn_idx, &param);
     return true;
 }
 static int gatt_find_info_req_cb(uint16_t handle, const struct eb_att_serv *serv, const struct eb_att_item *item,
@@ -365,9 +372,9 @@ static bool att_find_information_req_proc(struct eb_gatt_conn *conn, const uint8
     struct att_packet *att = (struct att_packet *)payload;
     eb_att_db_iter(conn->custom_db, att->find_information_req.start_handle, gatt_find_info_req_cb, &p);
     if (p.data_len > 2) {
-        gatt->send(conn->conn_hdl, p.data, p.data_len, NULL, NULL, gatt->usr_data);
+        gatt->send(conn->conn_idx, p.data, p.data_len, NULL, NULL);
     } else {
-        gatt_error_rsp(gatt, conn->conn_hdl, ATT_FIND_INFORMATION_REQ,
+        gatt_error_rsp(gatt, conn->conn_idx, ATT_FIND_INFORMATION_REQ,
                        att->find_information_req.start_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
     }
     return true;
@@ -444,10 +451,10 @@ static bool att_read_by_type_req_proc(struct eb_gatt_conn *conn, const uint8_t *
     eb_att_db_iter(conn->custom_db, att->read_by_type_req.start_handle, gatt_read_by_type_req_cb, &p);
 
     if (p.data_len > 2) {
-        gatt->send(conn->conn_hdl, p.data, p.data_len,
-                   NULL, NULL, gatt->usr_data);
+        gatt->send(conn->conn_idx, p.data, p.data_len,
+                   NULL, NULL);
     } else {
-        gatt_error_rsp(gatt, conn->conn_hdl, ATT_READ_BY_TYPE_REQ,
+        gatt_error_rsp(gatt, conn->conn_idx, ATT_READ_BY_TYPE_REQ,
                        att->read_by_type_req.start_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
     }
     return true;
@@ -520,7 +527,7 @@ static int gatt_read_req_cb(uint16_t handle, const struct eb_att_serv *serv, con
         struct eb_gatt *gatt;
         struct eb_gatt_conn *conn;
         struct att_packet *att;
-        uint16_t conn_hdl;
+        uint16_t conn_idx;
     } *p = usr_data;
     uint16_t req_handle, req_offset;
     if (p->att->opcode == ATT_READ_BLOB_REQ) {
@@ -534,7 +541,7 @@ static int gatt_read_req_cb(uint16_t handle, const struct eb_att_serv *serv, con
         // check permission
         uint8_t err = gatt_perm_check(p->conn, item, p->att->opcode);
         if (err != ATT_ERR_NO_ERROR) {
-            gatt_error_rsp(p->gatt, p->conn_hdl, p->att->opcode, req_handle, err);
+            gatt_error_rsp(p->gatt, p->conn_idx, p->att->opcode, req_handle, err);
             return EB_ATT_SEARCH_EXIT;
         }
         if (p->conn->server_pending_st != ST_NO_RESPONSE) {
@@ -551,7 +558,7 @@ static int gatt_read_req_cb(uint16_t handle, const struct eb_att_serv *serv, con
             .read_req.offset = req_offset,
         };
         // Up layer callback..
-        p->gatt->proc(p->conn_hdl, &param, p->gatt->usr_data);
+        p->gatt->proc(p->conn_idx, &param);
         // Check if need auto response
         if (p->conn->server_pending_st == ST_AUTO_RESPONSE) {
             uint16_t rsp_len;
@@ -567,11 +574,11 @@ static int gatt_read_req_cb(uint16_t handle, const struct eb_att_serv *serv, con
                     rsp_len = sizeof(struct att_read_rsp);
                 }
             }
-            p->gatt->send(p->conn_hdl, (uint8_t *)&rsp, rsp_len, NULL, NULL, p->gatt->usr_data);
+            p->gatt->send(p->conn_idx, (uint8_t *)&rsp, rsp_len, NULL, NULL);
             p->conn->server_pending_st = ST_NO_RESPONSE;
         }
     } else {
-        gatt_error_rsp(p->gatt, p->conn_hdl, p->att->opcode, req_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
+        gatt_error_rsp(p->gatt, p->conn_idx, p->att->opcode, req_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
     }
     return EB_ATT_SEARCH_EXIT;
 }
@@ -583,8 +590,8 @@ static bool att_read_req_proc(struct eb_gatt_conn *conn, const uint8_t *payload,
         struct eb_gatt *gatt;
         struct eb_gatt_conn *conn;
         struct att_packet *att;
-        uint16_t conn_hdl;
-    } p = { gatt, conn, att, conn->conn_hdl };
+        uint16_t conn_idx;
+    } p = { gatt, conn, att, conn->conn_idx };
     eb_att_db_iter(conn->custom_db, att->read_req.handle, gatt_read_req_cb, &p);
     return true;
 }
@@ -600,8 +607,8 @@ static bool att_read_blob_req_proc(struct eb_gatt_conn *conn, const uint8_t *pay
         struct eb_gatt *gatt;
         struct eb_gatt_conn *conn;
         struct att_packet *att;
-        uint16_t conn_hdl;
-    } p = { gatt, conn, att, conn->conn_hdl };
+        uint16_t conn_idx;
+    } p = { gatt, conn, att, conn->conn_idx };
     eb_att_db_iter(conn->custom_db, att->read_req.handle, gatt_read_req_cb, &p);
     return true;
 }
@@ -670,9 +677,9 @@ static bool att_read_by_group_type_req_proc(struct eb_gatt_conn *conn, const uin
     struct att_packet *att = (struct att_packet *)payload;
     eb_att_db_iter(conn->custom_db, att->read_by_group_type_req.start_handle, gatt_read_by_group_type_cb, &p);
     if (p.data_len > 2) {
-        gatt->send(conn->conn_hdl, p.data, p.data_len, NULL, NULL, gatt->usr_data);
+        gatt->send(conn->conn_idx, p.data, p.data_len, NULL, NULL);
     } else {
-        gatt_error_rsp(gatt, conn->conn_hdl, ATT_READ_BY_GROUP_TYPE_REQ,
+        gatt_error_rsp(gatt, conn->conn_idx, ATT_READ_BY_GROUP_TYPE_REQ,
                        att->read_by_group_type_req.start_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
     }
     return true;
@@ -690,7 +697,7 @@ static int gatt_write_req_cb(uint16_t handle, const struct eb_att_serv *serv, co
         struct eb_gatt_conn *conn;
         struct att_packet *att;
         uint16_t att_pack_len;
-        uint16_t conn_hdl;
+        uint16_t conn_idx;
     } *p = usr_data;
     uint16_t req_handle = p->att->write_req.handle;
     if (handle == req_handle) {
@@ -698,7 +705,7 @@ static int gatt_write_req_cb(uint16_t handle, const struct eb_att_serv *serv, co
         uint8_t err = gatt_perm_check(p->conn, item, p->att->opcode);
         if (err != ATT_ERR_NO_ERROR) {
             if (p->att->opcode != ATT_WRITE_CMD) {
-                gatt_error_rsp(p->gatt, p->conn_hdl, p->att->opcode, req_handle, err);
+                gatt_error_rsp(p->gatt, p->conn_idx, p->att->opcode, req_handle, err);
             }
             return EB_ATT_SEARCH_EXIT;
         }
@@ -720,17 +727,17 @@ static int gatt_write_req_cb(uint16_t handle, const struct eb_att_serv *serv, co
             .write_req.len = p->att_pack_len - sizeof(struct att_write_req),
         };
         // Up layer callback..
-        p->gatt->proc(p->conn_hdl, &param, p->gatt->usr_data);
+        p->gatt->proc(p->conn_idx, &param);
         // Check if need auto response
         if (p->conn->server_pending_st == ST_AUTO_RESPONSE) {
             struct att_packet rsp;
             EB_GATT_ASSERT(p->att->opcode == ATT_WRITE_REQ);
             rsp.write_rsp.opcode = ATT_WRITE_RSP;
-            p->gatt->send(p->conn_hdl, (uint8_t *)&rsp, sizeof(struct att_write_rsp), NULL, NULL, p->gatt->usr_data);
+            p->gatt->send(p->conn_idx, (uint8_t *)&rsp, sizeof(struct att_write_rsp), NULL, NULL);
             p->conn->server_pending_st = ST_NO_RESPONSE;
         }
     } else {
-        gatt_error_rsp(p->gatt, p->conn_hdl, p->att->opcode, req_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
+        gatt_error_rsp(p->gatt, p->conn_idx, p->att->opcode, req_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
     }
     return EB_ATT_SEARCH_EXIT;
 }
@@ -743,8 +750,8 @@ static bool att_write_req_proc(struct eb_gatt_conn *conn, const uint8_t *payload
         struct eb_gatt_conn *conn;
         struct att_packet *att;
         uint16_t att_pack_len;
-        uint16_t conn_hdl;
-    } p = { gatt, conn, att, datalen, conn->conn_hdl };
+        uint16_t conn_idx;
+    } p = { gatt, conn, att, datalen, conn->conn_idx };
     eb_att_db_iter(conn->custom_db, att->read_req.handle, gatt_write_req_cb, &p);
     return true;
 }
@@ -761,8 +768,8 @@ static bool att_write_cmd_proc(struct eb_gatt_conn *conn, const uint8_t *payload
         struct eb_gatt_conn *conn;
         struct att_packet *att;
         uint16_t att_pack_len;
-        uint16_t conn_hdl;
-    } p = { gatt, conn, att, datalen, conn->conn_hdl };
+        uint16_t conn_idx;
+    } p = { gatt, conn, att, datalen, conn->conn_idx };
     eb_att_db_iter(conn->custom_db, att->read_req.handle, gatt_write_req_cb, &p);
     return true;
 }
@@ -780,14 +787,14 @@ static bool att_prepare_write_req_proc(struct eb_gatt_conn *conn, const uint8_t 
             conn->write_cache_len = MAX(conn->write_cache_len, write_offset + write_len);
             // Use request buffer to response to client
             att->prepare_write_rsp.opcode = ATT_PREPARE_WRITE_RSP;
-            gatt->send(conn->conn_hdl, (uint8_t *)att, datalen, NULL, NULL, gatt->usr_data);
+            gatt->send(conn->conn_idx, (uint8_t *)att, datalen, NULL, NULL);
             return true;
         } else {
             // excceed max data cache length
             err_code = ATT_ERR_INVALID_ATTRIBUTE_VALUE_LENGTH;
         }
     }
-    gatt_error_rsp(gatt, conn->conn_hdl, att->opcode, att->prepare_write_req.handle, err_code);
+    gatt_error_rsp(gatt, conn->conn_idx, att->opcode, att->prepare_write_req.handle, err_code);
     return true;
 }
 static bool att_prepare_write_rsp_proc(struct eb_gatt_conn *conn, const uint8_t *payload, uint16_t datalen)
@@ -815,14 +822,14 @@ static bool att_execute_write_req_proc(struct eb_gatt_conn *conn, const uint8_t 
             .write_req.len = conn->write_cache_len,
         };
         // Up layer callback..
-        gatt->proc(conn->conn_hdl, &param, gatt->usr_data);
+        gatt->proc(conn->conn_idx, &param);
     }
     // Check if need auto response
     if (conn->server_pending_st == ST_AUTO_RESPONSE) {
         struct att_packet rsp;
         EB_GATT_ASSERT(att->opcode == ATT_EXECUTE_WRITE_REQ);
         rsp.execute_write_rsp.opcode = ATT_EXECUTE_WRITE_RSP;
-        gatt->send(conn->conn_hdl, (uint8_t *)&rsp, sizeof(struct att_execute_write_rsp), NULL, NULL, gatt->usr_data);
+        gatt->send(conn->conn_idx, (uint8_t *)&rsp, sizeof(struct att_execute_write_rsp), NULL, NULL);
         conn->server_pending_st = ST_NO_RESPONSE;
     }
     // Clear prepare write cache
@@ -901,10 +908,11 @@ const static struct {
     {           ATT_SIGNED_WRITE_CMD,           att_signed_write_cmd_proc },
 };
 
-void eb_gattp_received(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t *payload, uint16_t datalen)
+void eb_gattp_received(void *gatt_buf, uint16_t conn_idx, uint8_t *payload, uint16_t datalen)
 {
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
     struct att_packet *att = (struct att_packet *)payload;
-    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_hdl(gatt, conn_hdl);
+    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_idx(gatt, conn_idx);
     if (conn) {
         size_t i;
         for (i = 0; i < sizeof(att_proc_handler) / sizeof(att_proc_handler[0]); i++) {
@@ -916,17 +924,18 @@ void eb_gattp_received(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t *payload
             }
         }
         // Not support
-        gatt_error_rsp(gatt, conn_hdl, att->opcode, 0x0000, ATT_ERR_REQUEST_NOT_SUPPORTED);
+        gatt_error_rsp(gatt, conn_idx, att->opcode, 0x0000, ATT_ERR_REQUEST_NOT_SUPPORTED);
     }
 }
 
-void eb_gattp_connected(struct eb_gatt *gatt, uint16_t conn_hdl)
+void eb_gattp_connected(void *gatt_buf, uint16_t conn_idx)
 {
-    if (!eb_gatt_get_by_conn_hdl(gatt, conn_hdl)) {
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
+    if (!eb_gatt_get_by_conn_idx(gatt, conn_idx)) {
         int i;
         for (i = 0; i < gatt->max_connection; i++) {
             if (gatt->conn[i].conn_hdl == EB_GATT_INVALID_CONN_HDL) {
-                gatt->conn[i].conn_hdl = conn_hdl;
+                gatt->conn[i].conn_idx = conn_idx;
                 gatt->conn[i].mtu = EB_GATT_DEF_MTU;
                 gatt->conn[i].sec_level = EB_GATT_SEC_NO_SEC;
                 gatt->conn[i].server_pending_st = ST_NO_RESPONSE;
@@ -936,25 +945,27 @@ void eb_gattp_connected(struct eb_gatt *gatt, uint16_t conn_hdl)
                 memset(gatt->conn[i].write_cache, 0, gatt->max_write_cache);
                 gatt->conn[i].write_cache_handle = 0x0;
                 gatt->conn[i].write_cache_len = 0;
-                gatt->connected(conn_hdl, gatt->usr_data);
+                gatt->connected(conn_idx);
                 break;
             }
         }
     }
 }
 
-void eb_gattp_disconnected(struct eb_gatt *gatt, uint16_t conn_hdl)
+void eb_gattp_disconnected(void *gatt_buf, uint16_t conn_idx)
 {
-    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_hdl(gatt, conn_hdl);
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
+    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_idx(gatt, conn_idx);
     if (conn) {
         conn->conn_hdl = EB_GATT_INVALID_CONN_HDL;
-        gatt->disconnected(conn_hdl, gatt->usr_data);
+        gatt->disconnected(conn_idx);
     }
 }
 
-void eb_gattp_sec_changed(struct eb_gatt *gatt, uint16_t conn_hdl, uint8_t sec_lvl)
+void eb_gattp_sec_changed(void *gatt_buf, uint16_t conn_idx, uint8_t sec_lvl)
 {
-    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_hdl(gatt, conn_hdl);
+    struct eb_gatt *gatt = (struct eb_gatt *)gatt_buf;
+    struct eb_gatt_conn *conn = eb_gatt_get_by_conn_idx(gatt, conn_idx);
     if (conn) {
         conn->sec_level = sec_lvl;
     }
