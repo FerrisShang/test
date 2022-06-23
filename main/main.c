@@ -71,6 +71,9 @@ void att_db_init(void)
     static const struct eb_att_item serv3_atts[] = {
         { (struct eb_uuid *) &eb_att_char_def, 0x02, },
         { (struct eb_uuid *) &char4,           0x1A, 1, 1},
+        { (struct eb_uuid *) &eb_att_cccd_def, 0x0A, 1, 0},
+        { (struct eb_uuid *) &eb_att_char_def, 0x02, },
+        { (struct eb_uuid *) &char4,           0x1A, 0, 0},
         { (struct eb_uuid *) &eb_att_cccd_def, 0x0A, },
     };
     static const struct eb_att_serv att_serv3 = {
@@ -286,7 +289,6 @@ static void hci_proc_le_evt(uint8_t subcode, void *payload, int len, void *usr_d
 
 static void gatt_send_cb(uint8_t conn_idx, uint8_t *data, int len, uint8_t seq_num)
 {
-    EB_INFO("MAIN ", "send offset %d\n", (int)offsetof(struct eb_l2cap_send_data, payload));
     struct eb_l2cap_send_data *l2cap_data = (struct eb_l2cap_send_data *)
                                             (data - offsetof(struct eb_l2cap_send_data, payload));
     l2cap_data->conn_idx = conn_idx;
@@ -306,7 +308,6 @@ void *gatt_msg_malloc_cb(size_t size, uint8_t priority)
 {
     const int offset = sizeof(struct eb_l2cap_send_data) + EB_L2CAP_RESERVED_SIZE;
     uint8_t *p = EB_MALLOC(EB_L2CAP_MALLOC_SIZE(size), priority);
-    EB_INFO("MAIN ", "malloc offset %d\n", offset);
     return p + offset;
 }
 void gatt_msg_free_cb(void *p)
@@ -322,7 +323,7 @@ static void gatt_proc_cb(uint8_t conn_idx, struct gatt_param *param)
         printf("EB_GATTS_READ_REQ handle:0x%04X, offset:0x%04X\n",
                param->read_req.att_hdl, param->read_req.offset);
         eb_gatts_pending_request(gatt, conn_idx);
-        eb_gatts_read_response(gatt, conn_idx, ATT_ERR_NO_ERROR, (uint8_t *)"\x01\x00", 2);
+        eb_gatts_read_response(gatt, conn_idx, ATT_ERR_NO_ERROR, (uint8_t *)"\x31\x31\x36", 3);
     } else if (param->evt_id == EB_GATTS_WRITE_REQ) {
         printf("EB_GATTS_WRITE_REQ handle:0x%04X, type:0x%04X\n\t", param->write_req.att_hdl, param->write_req.type);
         DUMP(param->write_req.data, param->write_req.len);
@@ -401,7 +402,7 @@ int main(void)
         gatt_send_cb, gatt_proc_cb, gatt_conn_cb, gatt_disconn_cb, gatt_msg_malloc_cb, gatt_msg_free_cb,
     };
     struct eb_gatt_param gatt_param = {
-        &gatt_cbs, 517, 517, 8, 4
+        &gatt_cbs, 30, 517, 8, 4
     };
     gatt = eb_gatt_init(&gatt_param);
     att_db_init();

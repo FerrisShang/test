@@ -105,8 +105,7 @@ struct eb_l2cap *eb_l2cap_init(struct eb_l2cap_param *param)
         memset(&l2cap->conn[i], 0, sizeof(struct eb_l2cap_conn));
         eb_queue_init(&l2cap->conn[i].tx_list);
         l2cap->conn[i].conn_hdl = EB_L2CAP_INVALID_HDL;
-        l2cap->conn[i].rx_buf = (uint8_t *)l2cap + sizeof(struct eb_l2cap_conn) * param->max_connection +
-                                i * param->max_recv_buf_len;
+        l2cap->conn[i].rx_buf = EB_L2CAP_ENV_MALLOC(param->max_recv_buf_len);
     }
     return l2cap;
 }
@@ -144,7 +143,6 @@ void eb_l2cap_send(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *data)
     if (conn) {  // save in queue;
         struct eb_l2cap_send_data_internal *int_data =
             (struct eb_l2cap_send_data_internal *)((uint8_t *)data - L2CAP_RSV_LEN);
-        EB_L2CAP_INFO("%d...\n", (int)L2CAP_RSV_LEN);
         eb_queue_push(&conn->tx_list, (struct eb_queue_item *)int_data);
     } else {
         l2cap->cbs->send_done_cb(data, EB_L2CAP_SD_NO_CONN);
@@ -157,14 +155,17 @@ void eb_pl2cap_received(struct eb_l2cap *l2cap, uint8_t conn_idx, uint16_t hdl_f
     EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
     const int l2cap_header_len = 4; // len(LENGTH) + len(CID) = 4
     struct eb_l2cap_conn *conn = get_l2cap_by_idx(l2cap, conn_idx);
+    EB_L2CAP_DUMP("DUMP: ", payload, datalen);
     if (conn) {
         if ((hdl_flags & EB_L2CAP_PB_FAFP) == EB_L2CAP_PB_FAFP) { // First packet
             uint16_t l2cap_len = *payload + (*(payload + 1) << 8);
-            if (l2cap_len + l2cap_header_len > l2cap->max_recv_buf_len ||
-                    conn->rx_idx + datalen > l2cap->max_recv_buf_len) {
+            if (l2cap_len + l2cap_header_len > l2cap->max_recv_buf_len) {
                 // Exceed L2cap buffer capability
                 EB_L2CAP_WARNING(0, EB_L2CAP_DBG_ERR_RECV_OVERFLOW);
                 return;
+            }
+            if(datalen > l2cap_len + l2cap_header_len) { // bad package fix
+                datalen = l2cap_len + l2cap_header_len;
             }
             memcpy(conn->rx_buf, payload, datalen);
             conn->rx_idx = datalen;
@@ -197,7 +198,7 @@ void eb_pl2cap_received(struct eb_l2cap *l2cap, uint8_t conn_idx, uint16_t hdl_f
             p += sizeof(uint16_t); // Skip ACL length
             uint16_t cid = *p + (*(p + 1) << 8);
             p += sizeof(uint16_t); // Skip CID
-            l2cap->cbs->proc_cb(conn_idx, cid, p, conn->rx_idx);
+            l2cap->cbs->proc_cb(conn_idx, cid, p, conn->rx_idx - 2 * sizeof(uint16_t));
         }
     } else {
         // Recevie data from invalid connection

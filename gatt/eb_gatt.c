@@ -202,20 +202,20 @@ uint32_t eb_gatts_write_response(struct eb_gatt *gatt, uint16_t conn_idx, uint8_
     if (conn->server_pending_st != ST_NO_RESPONSE) {
         conn->server_pending_st = ST_NO_RESPONSE;
         if (att_state == ATT_ERR_NO_ERROR) {
-            // TODO: malloc
-            struct att_packet att;
-            uint16_t rsp_len = 0;
+            uint16_t rsp_len, opcode;
             if (conn->server_pending_op == ATT_WRITE_REQ) {
-                att.write_rsp.opcode = ATT_WRITE_RSP;
+                opcode = ATT_WRITE_RSP;
                 rsp_len = sizeof(struct att_write_rsp);
             } else if (conn->server_pending_op == ATT_EXECUTE_WRITE_REQ) {
-                att.execute_write_rsp.opcode = ATT_EXECUTE_WRITE_RSP;
+                opcode = ATT_EXECUTE_WRITE_RSP;
                 rsp_len = sizeof(struct att_execute_write_rsp);
             } else {
                 EB_GATT_WARNING(0, 0);
                 return EB_GATT_ERR_UNSPEC;
             }
-            gatt->cbs->send(conn_idx, (uint8_t *)&att, rsp_len, 0);
+            struct att_write_rsp *rsp = EB_GATT_REQ_MALLOC(sizeof(struct att_write_rsp));
+            rsp->opcode = opcode;
+            gatt->cbs->send(conn_idx, (uint8_t *)rsp, rsp_len, 0);
         } else {
             return gatt_error_rsp(gatt, NULL, conn_idx, conn->server_pending_op, conn->server_pending_hdl, att_state);
         }
@@ -330,12 +330,16 @@ static bool att_error_rsp_proc(struct eb_gatt_conn *conn, const uint8_t *payload
 static bool att_exchange_mtu_req_proc(struct eb_gatt_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     struct eb_gatt *gatt = eb_gatt_get_by_conn(conn);
-    struct att_packet *req_att = (struct att_packet *)payload, rsp_att;
-    rsp_att.exchange_mtu_rsp.mtu = gatt->max_mtu;
-    rsp_att.exchange_mtu_rsp.opcode = ATT_EXCHANGE_MTU_RSP;
-    // TODO: malloc
-    gatt->cbs->send(conn->conn_idx, (uint8_t *)&rsp_att, sizeof(struct att_exchange_mtu_rsp), 0);
-    conn->mtu = MIN(gatt->max_mtu, req_att->exchange_mtu_req.mtu);
+    struct att_exchange_mtu_rsp *rsp = EB_GATT_RSP_MALLOC(sizeof(struct att_exchange_mtu_rsp));
+    if (!rsp) {
+        EB_GATT_WARNING(rsp, 0);
+        return false;
+    }
+    struct att_exchange_mtu_req *req = (struct att_exchange_mtu_req *)payload;
+    rsp->mtu = gatt->max_mtu;
+    rsp->opcode = ATT_EXCHANGE_MTU_RSP;
+    gatt->cbs->send(conn->conn_idx, (uint8_t *)rsp, sizeof(struct att_exchange_mtu_rsp), 0);
+    conn->mtu = MIN(rsp->mtu, req->mtu);
     struct gatt_param param = {
         .evt_id = EB_GATT_MTU_CHANGED_IND,
         .status = ATT_ERR_NO_ERROR,
@@ -412,7 +416,7 @@ static bool att_find_information_req_proc(struct eb_gatt_conn *conn, const uint8
     if (p.data_len > 2) {
         gatt->cbs->send(conn->conn_idx, (uint8_t *)p.rsp, p.data_len, 0);
     } else {
-        return gatt_error_rsp(gatt, (uint8_t*)rsp, conn->conn_idx, ATT_FIND_INFORMATION_REQ,
+        gatt_error_rsp(gatt, (uint8_t *)rsp, conn->conn_idx, ATT_FIND_INFORMATION_REQ,
                               att->find_information_req.start_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
     }
     return true;
@@ -445,6 +449,8 @@ static int gatt_read_by_type_req_cb(uint16_t handle, const struct eb_att_serv *s
     }
     if (item && p->req_uuid_len == item->uuid->uuid_len && !memcmp(item->uuid->uuid, p->req->uuid, p->req_uuid_len)) {
         if (!EB_UUID_CMP(item->uuid, &eb_att_incl_def)) {
+            // TODO
+            return EB_ATT_SEARCH_EXIT;
         } else if (!EB_UUID_CMP(item->uuid, &eb_att_char_def)) {
             const struct eb_uuid *value_uuid = (item + 1)->uuid;
             if (rsp->length == 0) {
@@ -497,7 +503,7 @@ static bool att_read_by_type_req_proc(struct eb_gatt_conn *conn, const uint8_t *
     if (p.data_len > 2) {
         gatt->cbs->send(conn->conn_idx, (uint8_t *)rsp, p.data_len, 0);
     } else {
-        return gatt_error_rsp(gatt, (uint8_t*)rsp, conn->conn_idx, ATT_READ_BY_TYPE_REQ,
+        gatt_error_rsp(gatt, (uint8_t *)rsp, conn->conn_idx, ATT_READ_BY_TYPE_REQ,
                               req->start_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
     }
     return true;
@@ -604,22 +610,11 @@ static int gatt_read_req_cb(uint16_t handle, const struct eb_att_serv *serv, con
         p->gatt->cbs->proc(p->conn_idx, &param);
         // Check if need auto response
         if (p->conn->server_pending_st == ST_AUTO_RESPONSE) {
-            uint16_t rsp_len;
-            struct att_packet rsp;
             if (0) {
                 // TODO: response service & characterisic & ...
             } else {
-                if (p->att->opcode == ATT_READ_BLOB_REQ) {
-                    rsp.read_rsp.opcode = ATT_READ_BLOB_RSP;
-                    rsp_len = sizeof(struct att_read_blob_rsp);
-                } else {
-                    rsp.read_rsp.opcode = ATT_READ_RSP;
-                    rsp_len = sizeof(struct att_read_rsp);
-                }
+                eb_gatts_read_response(p->gatt, p->conn_idx, ATT_ERR_NO_ERROR, NULL, 0);
             }
-            // TODO: malloc
-            p->gatt->cbs->send(p->conn_idx, (uint8_t *)&rsp, rsp_len, 0);
-            p->conn->server_pending_st = ST_NO_RESPONSE;
         }
     } else {
         gatt_error_rsp(p->gatt, NULL, p->conn_idx, p->att->opcode, req_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
@@ -730,7 +725,7 @@ static bool att_read_by_group_type_req_proc(struct eb_gatt_conn *conn, const uin
     if (p.data_len > 2) {
         gatt->cbs->send(conn->conn_idx, (uint8_t *)rsp, p.data_len, 0);
     } else {
-        gatt_error_rsp(gatt, (uint8_t*)rsp, conn->conn_idx, ATT_READ_BY_GROUP_TYPE_REQ,
+        gatt_error_rsp(gatt, (uint8_t *)rsp, conn->conn_idx, ATT_READ_BY_GROUP_TYPE_REQ,
                        att->read_by_group_type_req.start_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
     }
     return true;
@@ -781,12 +776,8 @@ static int gatt_write_req_cb(uint16_t handle, const struct eb_att_serv *serv, co
         p->gatt->cbs->proc(p->conn_idx, &param);
         // Check if need auto response
         if (p->conn->server_pending_st == ST_AUTO_RESPONSE) {
-            struct att_packet rsp;
             EB_GATT_ERROR(p->att->opcode == ATT_WRITE_REQ, p->att->opcode);
-            rsp.write_rsp.opcode = ATT_WRITE_RSP;
-            // TODO: malloc
-            p->gatt->cbs->send(p->conn_idx, (uint8_t *)&rsp, sizeof(struct att_write_rsp), 0);
-            p->conn->server_pending_st = ST_NO_RESPONSE;
+            eb_gatts_write_response(p->gatt, p->conn_idx, ATT_ERR_NO_ERROR);
         }
     } else {
         gatt_error_rsp(p->gatt, NULL, p->conn_idx, p->att->opcode, req_handle, ATT_ERR_ATTRIBUTE_NOT_FOUND);
@@ -827,28 +818,32 @@ static bool att_write_cmd_proc(struct eb_gatt_conn *conn, const uint8_t *payload
 }
 static bool att_prepare_write_req_proc(struct eb_gatt_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
-    struct att_packet *att = (struct att_packet *)payload;
+    struct att_prepare_write_req *req = (struct att_prepare_write_req *)payload;
     struct eb_gatt *gatt = eb_gatt_get_by_conn(conn);
-    uint8_t err_code = gatt_perm_check_by_handle(conn, att->prepare_write_req.handle, ATT_PREPARE_WRITE_REQ);
+    uint8_t err_code = gatt_perm_check_by_handle(conn, req->handle, ATT_PREPARE_WRITE_REQ);
     if (err_code == ATT_ERR_NO_ERROR) {
-        uint16_t write_offset = att->prepare_write_req.offset;
+        uint16_t write_offset = req->offset;
         uint16_t write_len = datalen - sizeof(struct att_prepare_write_req);
         if (write_offset + write_len <= gatt->max_write_cache) {
-            conn->write_cache_handle = att->prepare_write_req.handle;
-            memcpy(&conn->write_cache[write_offset], att->prepare_write_req.value, write_len);
+            conn->write_cache_handle = req->handle;
+            memcpy(&conn->write_cache[write_offset], req->value, write_len);
             conn->write_cache_len = MAX(conn->write_cache_len, write_offset + write_len);
-            // Use request buffer to response to client
-            att->prepare_write_rsp.opcode = ATT_PREPARE_WRITE_RSP;
-            // TODO: malloc
-            gatt->cbs->send(conn->conn_idx, (uint8_t *)att, datalen, 0);
+
+            struct att_prepare_write_rsp *rsp = EB_GATT_RSP_MALLOC(datalen);
+            if (!rsp) {
+                EB_GATT_WARNING(rsp, 0);
+                return false;
+            }
+            memcpy(rsp, payload, datalen);
+            rsp->opcode = ATT_PREPARE_WRITE_RSP;
+            gatt->cbs->send(conn->conn_idx, (uint8_t *)rsp, datalen, 0);
             return true;
         } else {
             // excceed max data cache length
             err_code = ATT_ERR_INVALID_ATTRIBUTE_VALUE_LENGTH;
         }
-    } else {
-        gatt_error_rsp(gatt, NULL, conn->conn_idx, att->opcode, att->prepare_write_req.handle, err_code);
     }
+    gatt_error_rsp(gatt, NULL, conn->conn_idx, req->opcode, req->handle, err_code);
     return true;
 }
 static bool att_prepare_write_rsp_proc(struct eb_gatt_conn *conn, const uint8_t *payload, uint16_t datalen)
@@ -880,10 +875,13 @@ static bool att_execute_write_req_proc(struct eb_gatt_conn *conn, const uint8_t 
     }
     // Check if need auto response
     if (conn->server_pending_st == ST_AUTO_RESPONSE) {
-        struct att_packet rsp;
+        struct att_execute_write_rsp *rsp = EB_GATT_RSP_MALLOC(sizeof(struct att_execute_write_rsp));
+        if (!rsp) {
+            EB_GATT_WARNING(rsp, 0);
+            return false;
+        }
         EB_GATT_ERROR(att->opcode == ATT_EXECUTE_WRITE_REQ, att->opcode);
-        rsp.execute_write_rsp.opcode = ATT_EXECUTE_WRITE_RSP;
-        // TODO: malloc
+        rsp->opcode = ATT_EXECUTE_WRITE_RSP;
         gatt->cbs->send(conn->conn_idx, (uint8_t *)&rsp, sizeof(struct att_execute_write_rsp), 0);
         conn->server_pending_st = ST_NO_RESPONSE;
     }
