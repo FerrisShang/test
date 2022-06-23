@@ -1,5 +1,6 @@
 #include <string.h>
 #include "eb_l2cap.h"
+#include "eb_config_int.h"
 #include "eb_queue.h"
 
 #define EB_L2CAP_INVALID_HDL    0xFF
