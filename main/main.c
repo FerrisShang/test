@@ -11,13 +11,14 @@
 #include "eb_smp_aes.h"
 #include "eb_gatt.h"
 #include "eb_att.h"
+#include "eb_memory.h"
 #include "linux_udp_client.h"
 
 #define HCI_UDP
 
 #ifdef HCI_UDP
-    #define IP "127.0.0.1"
-    #define PORT 60000
+#define IP "127.0.0.1"
+#define PORT 60000
 #else
 #include "linux_usb_hci.h"
 struct linux_usb_hci *usb_hci;
@@ -42,37 +43,38 @@ bool scan_flag;
 
 void att_db_init(void)
 {
-    EB_ATT_DECLARE_UUID_16BIT(serv1, 0x1800);
-    EB_ATT_DECLARE_UUID_16BIT(serv2, 0x1801);
-    EB_ATT_DECLARE_UUID_16BIT(char1, 0x2a00);
-    EB_ATT_DECLARE_UUID_16BIT(char2, 0x2a01);
-    EB_ATT_DECLARE_UUID_16BIT(char3, 0x2a05);
-    EB_ATT_DECLARE_UUID_16BIT(serv3, 0xABCD);
-    EB_ATT_DECLARE_UUID_16BIT(char4, 0xCDEF);
+    static const struct eb_uuid_16bit serv1 = {0x02, { 0x00, 0x18}};
+    static const struct eb_uuid_16bit serv2 = {0x02, { 0x01, 0x18}};
+    static const struct eb_uuid_16bit char1 = {0x02, { 0x00, 0x2a}};
+    static const struct eb_uuid_16bit char2 = {0x02, { 0x01, 0x2a}};
+    static const struct eb_uuid_16bit char3 = {0x02, { 0x05, 0x2a}};
+    static const struct eb_uuid_16bit serv3 = {0x02, { 0xcd, 0xab}};
+    static const struct eb_uuid_16bit char4 = {0x02, { 0xef, 0xcd}};
+
     static const struct eb_att_item serv1_atts[] = {
-        { &eb_att_char_def, 0x02, },
-        { &char1,           0x02, 0, 0},
-        { &eb_att_char_def, 0x02, },
-        { &char2,           0x02, },
+        { (struct eb_uuid *) &eb_att_char_def, 0x02, },
+        { (struct eb_uuid *) &char1,           0x02, 0, 0},
+        { (struct eb_uuid *) &eb_att_char_def, 0x02, },
+        { (struct eb_uuid *) &char2,           0x02, },
     };
     static const struct eb_att_serv att_serv1 = {
-        &serv1, serv1_atts, sizeof(serv1_atts) / sizeof(serv1_atts[0])
+        (struct eb_uuid *) &serv1, serv1_atts, sizeof(serv1_atts) / sizeof(serv1_atts[0])
     };
     static const struct eb_att_item serv2_atts[] = {
-        { &eb_att_char_def, 0x02, },
-        { &char3,           ATT_PROP_INDICATE},
-        { &eb_att_cccd_def, 0x0A, },
+        { (struct eb_uuid *) &eb_att_char_def, 0x02, },
+        { (struct eb_uuid *) &char3,           ATT_PROP_INDICATE},
+        { (struct eb_uuid *) &eb_att_cccd_def, 0x0A, },
     };
     static const struct eb_att_serv att_serv2 = {
-        &serv2, serv2_atts, sizeof(serv2_atts) / sizeof(serv2_atts[0])
+        (struct eb_uuid *) &serv2, serv2_atts, sizeof(serv2_atts) / sizeof(serv2_atts[0])
     };
     static const struct eb_att_item serv3_atts[] = {
-        { &eb_att_char_def, 0x02, },
-        { &char4,           0x1A, 1, 1},
-        { &eb_att_cccd_def, 0x0A, },
+        { (struct eb_uuid *) &eb_att_char_def, 0x02, },
+        { (struct eb_uuid *) &char4,           0x1A, 1, 1},
+        { (struct eb_uuid *) &eb_att_cccd_def, 0x0A, },
     };
     static const struct eb_att_serv att_serv3 = {
-        &serv3, serv3_atts, sizeof(serv3_atts) / sizeof(serv3_atts[0])
+        (struct eb_uuid *) &serv3, serv3_atts, sizeof(serv3_atts) / sizeof(serv3_atts[0])
     };
     eb_gatts_add_service(gatt, &att_serv1);
     eb_gatts_add_service(gatt, &att_serv2);
@@ -99,7 +101,7 @@ void h4tl_recv_cb(uint8_t *data, size_t len, void *p)
     if (*data == 0x04) {
         eb_evt_received(hci, data[1], data + 3, len - 3);
     } else if (*data == 0x02) {
-        eb_l2cap_received(l2cap, data[1] + (data[2] << 8), len - 5, data + 5);
+        eb_pl2cap_received(l2cap, 0, data[1] + (data[2] << 8), len - 5, data + 5);
     } else {
         assert(0);
     }
@@ -109,15 +111,8 @@ void main_callback(void *p)
 {
     bool active;
     do {
-        active = false;
-        if (eb_h4tl_sche_once(h4tl)) {
-            active = true;
-        }
-        int ava_num;
-        ava_num = eb_l2cap_sche_flush_once(l2cap);
-        if (ava_num != eb_l2cap_sche_flush_once(l2cap)) {
-            active = true;
-        }
+        active = eb_h4tl_sche_once(h4tl);
+        active |= eb_l2cap_sche_once(l2cap);
     } while (active);
 }
 
@@ -145,7 +140,7 @@ static void hci_proc_cmp(uint16_t opcode, void *payload, int len, void *usr_data
         struct hci_le_read_buffer_size_v1_cmp *b = (struct hci_le_read_buffer_size_v1_cmp *)payload;
         le_acl_data_packet_length = b->le_acl_data_packet_length;
         total_num_le_acl_data_packets = b->total_num_le_acl_data_packets;
-        eb_l2cap_acl_cfg(l2cap, le_acl_data_packet_length, total_num_le_acl_data_packets);
+        eb_pl2cap_acl_cfg(l2cap, le_acl_data_packet_length, total_num_le_acl_data_packets);
         struct hci_set_event_mask p = {
             {
                 0xFF, 0xFF, 0xFF, 0xFF,
@@ -186,7 +181,7 @@ static void hci_proc_evt(uint8_t evt_code, void *payload, int len, void *usr_dat
 {
     if (evt_code == HCI_DISCONNECTION_COMPLETE) {
         struct hci_disconnection_complete *p = payload;
-        eb_l2cap_disconnected(l2cap, p->connection_handle);
+        eb_pl2cap_disconnected(l2cap, p->connection_handle);
         eb_hci_cmd_send(hci, HCI_RESET, NULL);
         printf("Disconnected reason: 0x%02X\n", p->reason);
     } else if (evt_code == HCI_READ_REMOTE_VERSION_INFORMATION_COMPLETE) {
@@ -199,41 +194,56 @@ static void hci_proc_evt(uint8_t evt_code, void *payload, int len, void *usr_dat
         struct hci_number_of_completed_packets *p = payload;
         int i;
         for (i = 0; i < p->num_handles; i++) {
-            eb_l2cap_packets_completed(l2cap, p->params[i].connection_handle, p->params[i].num_completed_packets);
+            eb_pl2cap_packets_completed(l2cap, p->params[i].connection_handle, p->params[i].num_completed_packets);
         }
     } else if (evt_code == HCI_ENCRYPTION_CHANGE_V1) {
         struct hci_encryption_change_v1 *p = payload;
-        eb_smpp_encrypt_changed(smp, p->connection_handle, p->encryption_enabled, 16);
-        eb_gattp_sec_changed(gatt, p->connection_handle, EB_GATT_SEC_ENCRYPTED);
+        // eb_smpp_encrypt_changed(smp, p->connection_handle, p->encryption_enabled, 16);
+        eb_pgatt_sec_changed(gatt, p->connection_handle, EB_GATT_SEC_ENCRYPTED);
     }
 }
 
-static void l2cap_send(uint8_t *data, int len, void *usr_data)
+static void l2cap_send(uint8_t *data, int len)
 {
     eb_h4tl_send(h4tl, data, len);
 }
 
-static void l2cap_proc(uint16_t conn_hdl, uint16_t cid, void *payload, int len, void *usr_data)
+static void l2cap_send_done_cb(struct eb_l2cap_send_data *data, uint8_t status)
 {
-    if (cid == EB_L2CAP_CID_ATT) {
-        eb_gattp_received(gatt, conn_hdl, payload, len);
-    } else if (cid == EB_L2CAP_CID_SMP) {
-        eb_smpp_received(smp, conn_hdl, payload, len);
+    switch (data->cid) {
+        case EB_L2CAP_CID_ATT:
+            eb_pgatt_send_done(gatt, data->conn_idx, (struct att_packet *)data->payload, data->seq_num);
+            break;
+        case EB_L2CAP_CID_SIG:
+            // TODO
+            break;
+        case EB_L2CAP_CID_SMP:
+            // TODO
+            break;
     }
 }
 
-static void l2cap_connected(uint16_t conn_hdl, uint8_t role, uint8_t *peer_addr, uint8_t peer_addr_type,
-                            uint8_t *local_addr, uint8_t local_addr_type, void *usr_data)
+static void l2cap_proc(uint8_t conn_idx, uint16_t cid, void *payload, int len)
 {
-    eb_smpp_connected(smp, conn_hdl, role, peer_addr, peer_addr_type, local_addr, local_addr_type);
-    eb_gattp_connected(gatt, conn_hdl);
+    if (cid == EB_L2CAP_CID_ATT) {
+        eb_pgatt_received(gatt, conn_idx, payload, len);
+    } else if (cid == EB_L2CAP_CID_SMP) {
+        // eb_smpp_received(smp, conn_hdl, payload, len);
+    }
+}
+
+static void l2cap_connected(uint8_t conn_idx, uint8_t role, uint8_t *peer_addr, uint8_t peer_addr_type,
+                            uint8_t *local_addr, uint8_t local_addr_type)
+{
+    // eb_smpp_connected(smp, conn_hdl, role, peer_addr, peer_addr_type, local_addr, local_addr_type);
+    eb_pgatt_connected(gatt, conn_idx);
     // eb_smp_security_req(smp, conn_hdl, SMP_AUTH_FLAGS_BONDING);
 }
 
-static void l2cap_disconnected(uint16_t conn_hdl, void *usr_data)
+static void l2cap_disconnected(uint8_t conn_idx)
 {
-    eb_smpp_disconnected(smp, conn_hdl);
-    eb_gattp_disconnected(gatt, conn_hdl);
+    // eb_smpp_disconnected(smp, conn_hdl);
+    eb_pgatt_disconnected(gatt, conn_idx);
 }
 
 static void timer_callback(void *p)
@@ -265,45 +275,63 @@ static void hci_proc_le_evt(uint8_t subcode, void *payload, int len, void *usr_d
         }
         printf("  <-MAC == Connected\n");
         uint8_t local_addr[] = LOCAL_RAND_ADDR;
-        eb_l2cap_connected(l2cap, p->connection_handle, p->role, p->peer_address, p->peer_address_type, local_addr, 1);
+        eb_pl2cap_connected(l2cap, 0, p->connection_handle, p->role, p->peer_address, p->peer_address_type, local_addr, 1);
         struct hci_read_remote_version_information r = { p->connection_handle };
         eb_hci_cmd_send(hci, HCI_READ_REMOTE_VERSION_INFORMATION, &r);
     } else if (subcode == HCI_LE_LONG_TERM_KEY_REQUEST) {
-        struct hci_le_long_term_key_request *p = payload;
-        eb_smpp_ltk_request(smp, p->connection_handle, p->random_number, p->encrypted_diversifier);
+        // struct hci_le_long_term_key_request *p = payload;
+        // eb_smpp_ltk_request(smp, p->connection_handle, p->random_number, p->encrypted_diversifier);
     }
 }
 
-static void gatt_send_cb(uint16_t conn_hdl, uint8_t *data, int len, void(*send_done)(void *), void *p, void *usr_data)
+static void gatt_send_cb(uint8_t conn_idx, uint8_t *data, int len, uint8_t seq_num)
 {
-    struct eb_l2cap_send_data l2cap_data = {
-        conn_hdl, EB_L2CAP_CID_ATT, data, len, send_done, p
-    };
-    eb_l2cap_send(l2cap, &l2cap_data);
+    EB_INFO("MAIN ", "send offset %d\n", (int)offsetof(struct eb_l2cap_send_data, payload));
+    struct eb_l2cap_send_data *l2cap_data = (struct eb_l2cap_send_data *)
+                                            (data - offsetof(struct eb_l2cap_send_data, payload));
+    l2cap_data->conn_idx = conn_idx;
+    l2cap_data->seq_num = seq_num;
+    l2cap_data->length = len;
+    l2cap_data->cid = EB_L2CAP_CID_ATT;
+    eb_l2cap_send(l2cap, l2cap_data);
 }
-static void gatt_conn_cb(uint16_t conn_hdl, void *usr_data)
+static void gatt_conn_cb(uint8_t conn_idx)
 {
 }
-static void gatt_disconn_cb(uint16_t conn_hdl, void *usr_data)
+static void gatt_disconn_cb(uint8_t conn_idx)
 {
 }
-static void gatt_proc_cb(uint16_t conn_hdl, struct gatt_param *param, void *usr_data)
+
+void *gatt_msg_malloc_cb(size_t size, uint8_t priority)
+{
+    const int offset = sizeof(struct eb_l2cap_send_data) + EB_L2CAP_RESERVED_SIZE;
+    uint8_t *p = EB_MALLOC(EB_L2CAP_MALLOC_SIZE(size), priority);
+    EB_INFO("MAIN ", "malloc offset %d\n", offset);
+    return p + offset;
+}
+void gatt_msg_free_cb(void *p)
+{
+    const int offset = sizeof(struct eb_l2cap_send_data) + EB_L2CAP_RESERVED_SIZE;
+    EB_FREE((uint8_t *)p - offset);
+}
+static void gatt_proc_cb(uint8_t conn_idx, struct gatt_param *param)
 {
     if (param->evt_id == EB_GATT_MTU_CHANGED_IND) {
         printf("EB_GATT_MTU_CHANGED_IND: %d\n", param->mtu_changed.mtu);
     } else if (param->evt_id == EB_GATTS_READ_REQ) {
         printf("EB_GATTS_READ_REQ handle:0x%04X, offset:0x%04X\n",
                param->read_req.att_hdl, param->read_req.offset);
-        eb_gatts_pending_request(gatt, conn_hdl);
-        eb_gatts_read_response(gatt, conn_hdl, ATT_ERR_NO_ERROR, (uint8_t *)"\x01\x00", 2);
+        eb_gatts_pending_request(gatt, conn_idx);
+        eb_gatts_read_response(gatt, conn_idx, ATT_ERR_NO_ERROR, (uint8_t *)"\x01\x00", 2);
     } else if (param->evt_id == EB_GATTS_WRITE_REQ) {
         printf("EB_GATTS_WRITE_REQ handle:0x%04X, type:0x%04X\n\t", param->write_req.att_hdl, param->write_req.type);
         DUMP(param->write_req.data, param->write_req.len);
-        eb_gatts_pending_request(gatt, conn_hdl);
-        eb_gatts_write_response(gatt, conn_hdl, ATT_ERR_NO_ERROR);
+        eb_gatts_pending_request(gatt, conn_idx);
+        eb_gatts_write_response(gatt, conn_idx, ATT_ERR_NO_ERROR);
     }
 }
 
+#if 0
 static void smp_send_cb(uint16_t conn_hdl, uint8_t *data, int len, void *usr_data)
 {
     struct eb_l2cap_send_data l2cap_data = {
@@ -329,6 +357,7 @@ static void smp_proc_cb(uint16_t conn_hdl, struct smp_param *param, void *usr_da
         }
     }
 }
+#endif
 static void smp_ltk_resp_cb(uint16_t conn_hdl, uint8_t *key, void *usr_data)
 {
     struct hci_le_long_term_key_request_reply p;
@@ -360,22 +389,27 @@ int main(void)
     h4tl = eb_h4tl_create(h4tl_send_cb, h4tl_recv_cb, NULL, NULL);
     struct eb_hci_cfg hci_cfg = { hci_send, hci_proc_cmp, hci_proc_evt, hci_proc_le_evt, NULL };
     hci = eb_hci_init(&hci_cfg, NULL);
-    struct eb_l2cap_cfg l2cap_cfg = {
-        l2cap_send, l2cap_proc, l2cap_connected, l2cap_disconnected,
-        le_acl_data_packet_length, total_num_le_acl_data_packets,
+    const struct eb_l2cap_callbacks l2cap_cbs = {
+        l2cap_send, l2cap_send_done_cb, l2cap_proc, l2cap_connected, l2cap_disconnected,
     };
-    l2cap = eb_l2cap_init(&l2cap_cfg, NULL);
+    struct eb_l2cap_param l2cap_param = {
+        &l2cap_cbs, le_acl_data_packet_length, total_num_le_acl_data_packets, 4, 300
+    };
+    l2cap = eb_l2cap_init(&l2cap_param);
 
-    struct eb_gatt_cfg gatt_cfg = {
-        gatt_send_cb, gatt_conn_cb, gatt_disconn_cb, gatt_proc_cb, 517, 4, 0
+    struct eb_gatt_callbacks gatt_cbs = {
+        gatt_send_cb, gatt_proc_cb, gatt_conn_cb, gatt_disconn_cb, gatt_msg_malloc_cb, gatt_msg_free_cb,
     };
-    gatt = eb_gatt_init(&gatt_cfg, NULL);
+    struct eb_gatt_param gatt_param = {
+        &gatt_cbs, 517, 517, 8, 4
+    };
+    gatt = eb_gatt_init(&gatt_param);
     att_db_init();
 
-    struct eb_smp_cfg smp_cfg = {
-        smp_send_cb, smp_conn_cb, smp_disconn_cb, smp_proc_cb, smp_ltk_resp_cb, 4, NULL
-    };
-    smp = eb_smp_init(&smp_cfg, NULL);
+    // struct eb_smp_cfg smp_cfg = {
+    //     smp_send_cb, smp_conn_cb, smp_disconn_cb, smp_proc_cb, smp_ltk_resp_cb, 4, NULL
+    // };
+    // smp = eb_smp_init(&smp_cfg, NULL);
 
     #ifdef SMP_ALG_HCI_ENC
     eb_smp_aes128_init(encrypt_data, NULL);

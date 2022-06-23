@@ -2,15 +2,25 @@
 #include "eb_l2cap.h"
 #include "eb_config_int.h"
 #include "eb_queue.h"
+#include "eb_memory.h"
+#include "eb_debug.h"
+
+#define EB_L2CAP_ERROR(exp, n)         EB_ERROR("[L2CAP] ", exp, n)
+#define EB_L2CAP_WARNING(exp, n)       EB_WARNING("[L2CAP] ", exp, n)
+#define EB_L2CAP_INFO(fmt, ...)        EB_INFO("[L2CAP] ", fmt, ##__VA_ARGS__)
+#define EB_L2CAP_DUMP(msg, buf, len)   EB_DUMP("[L2CAP] ", msg, buf, len)
+
+#define EB_L2CAP_ENV_MALLOC(size)      EB_MALLOC(size, EB_MALLOC_PRIO_CRITICAL)
+#define EB_L2CAP_FREE(p)               EB_FREE(p)
 
 #define EB_L2CAP_INVALID_HDL    0xFF
 #define EB_L2CAP_DEF_CONN_NUM   0x4
 #define EB_L2CAP_MAX_CONN_NUM   0x8
 
-#define EB_L2CAP_HANDLE_MASK 0x0FFF
-#define EB_L2CAP_PB_FNFP     0x0000
-#define EB_L2CAP_PB_CF       0x1000
-#define EB_L2CAP_PB_FAFP     0x2000
+#define EB_L2CAP_HANDLE_MASK    0x0FFF
+#define EB_L2CAP_PB_FNFP        0x0000
+#define EB_L2CAP_PB_CF          0x1000
+#define EB_L2CAP_PB_FAFP        0x2000
 
 struct eb_l2cap_cfg {
 };
@@ -63,7 +73,7 @@ struct eb_l2cap_conn {
  **************************************************************/
 
 struct eb_l2cap {
-    const struct eb_l2cap_callbacks *cb;
+    const struct eb_l2cap_callbacks *cbs;
     uint16_t acl_data_packet_length;
     uint8_t total_num_le_acl_data_packets : 4;
     uint8_t num_le_acl_data_packets       : 4;
@@ -73,13 +83,17 @@ struct eb_l2cap {
     struct eb_l2cap_conn conn[0];
 };
 
-void eb_l2cap_init(void *l2cap_buf, struct eb_l2cap_param *param)
+struct eb_l2cap *eb_l2cap_init(struct eb_l2cap_param *param)
 {
-    struct eb_l2cap *l2cap = (struct eb_l2cap *)l2cap_buf;
+    struct eb_l2cap *l2cap = EB_L2CAP_ENV_MALLOC(sizeof(struct eb_l2cap) +
+                                                 param->max_connection * sizeof(struct eb_l2cap_conn));
     EB_L2CAP_ERROR(param, EB_L2CAP_DBG_ERR_PARAM);
-    EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
+    EB_L2CAP_ERROR(param->cbs, EB_L2CAP_DBG_ERR_PARAM);
+    EB_L2CAP_ERROR(param->cbs->send_cb, EB_L2CAP_DBG_ERR_PARAM);
+    EB_L2CAP_ERROR(param->cbs->send_done_cb, EB_L2CAP_DBG_ERR_PARAM);
+    EB_L2CAP_ERROR(param->cbs->proc_cb, EB_L2CAP_DBG_ERR_PARAM);
     memset(l2cap, 0, sizeof(struct eb_l2cap));
-    l2cap->cb = param->cb;
+    l2cap->cbs = param->cbs;
     l2cap->acl_data_packet_length = param->acl_data_packet_length;
     l2cap->total_num_le_acl_data_packets = param->total_num_le_acl_data_packets;
     l2cap->num_le_acl_data_packets = param->total_num_le_acl_data_packets;
@@ -94,16 +108,11 @@ void eb_l2cap_init(void *l2cap_buf, struct eb_l2cap_param *param)
         l2cap->conn[i].rx_buf = (uint8_t *)l2cap + sizeof(struct eb_l2cap_conn) * param->max_connection +
                                 i * param->max_recv_buf_len;
     }
+    return l2cap;
 }
 
-int eb_l2cap_size(int max_connection, int max_recv_buf_len)
+static struct eb_l2cap_conn *get_l2cap_by_idx(struct eb_l2cap *l2cap, uint8_t conn_idx)
 {
-    return sizeof(struct eb_l2cap) + max_connection * (max_recv_buf_len + sizeof(struct eb_l2cap_conn));
-}
-
-static struct eb_l2cap_conn *get_l2cap_by_idx(void *l2cap_buf, uint8_t conn_idx)
-{
-    struct eb_l2cap *l2cap = (struct eb_l2cap *)l2cap_buf;
     EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
     EB_L2CAP_ERROR(conn_idx < l2cap->max_connection, EB_L2CAP_DBG_ERR_PARAM);
     struct eb_l2cap_conn *conn = &l2cap->conn[conn_idx];
@@ -114,9 +123,8 @@ static struct eb_l2cap_conn *get_l2cap_by_idx(void *l2cap_buf, uint8_t conn_idx)
     }
 }
 
-static struct eb_l2cap_conn *set_l2cap_by_idx(void *l2cap_buf, uint8_t conn_idx, uint16_t conn_hdl)
+static struct eb_l2cap_conn *set_l2cap_by_idx(struct eb_l2cap *l2cap, uint8_t conn_idx, uint16_t conn_hdl)
 {
-    struct eb_l2cap *l2cap = (struct eb_l2cap *)l2cap_buf;
     EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
     EB_L2CAP_ERROR(conn_idx < l2cap->max_connection, EB_L2CAP_DBG_ERR_PARAM);
     struct eb_l2cap_conn *conn = &l2cap->conn[conn_idx];
@@ -130,23 +138,22 @@ static struct eb_l2cap_conn *set_l2cap_by_idx(void *l2cap_buf, uint8_t conn_idx,
 
 #define L2CAP_RSV_LEN offsetof(struct eb_l2cap_send_data_internal, data)
 
-void eb_l2cap_send(void *l2cap_buf, struct eb_l2cap_send_data *data)
+void eb_l2cap_send(struct eb_l2cap *l2cap, struct eb_l2cap_send_data *data)
 {
-    struct eb_l2cap *l2cap = (struct eb_l2cap *)l2cap_buf;
     struct eb_l2cap_conn *conn = get_l2cap_by_idx(l2cap, data->conn_idx);
     if (conn) {  // save in queue;
         struct eb_l2cap_send_data_internal *int_data =
             (struct eb_l2cap_send_data_internal *)((uint8_t *)data - L2CAP_RSV_LEN);
+        EB_L2CAP_INFO("%d...\n", (int)L2CAP_RSV_LEN);
         eb_queue_push(&conn->tx_list, (struct eb_queue_item *)int_data);
     } else {
-        l2cap->cb->send_done_cb(data, EB_L2CAP_SD_NO_CONN);
+        l2cap->cbs->send_done_cb(data, EB_L2CAP_SD_NO_CONN);
     }
 }
 
-void eb_pl2cap_received(void *l2cap_buf, uint8_t conn_idx, uint16_t hdl_flags, uint16_t datalen,
+void eb_pl2cap_received(struct eb_l2cap *l2cap, uint8_t conn_idx, uint16_t hdl_flags, uint16_t datalen,
                         uint8_t *payload)
 {
-    struct eb_l2cap *l2cap = (struct eb_l2cap *)l2cap_buf;
     EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
     const int l2cap_header_len = 4; // len(LENGTH) + len(CID) = 4
     struct eb_l2cap_conn *conn = get_l2cap_by_idx(l2cap, conn_idx);
@@ -190,7 +197,7 @@ void eb_pl2cap_received(void *l2cap_buf, uint8_t conn_idx, uint16_t hdl_flags, u
             p += sizeof(uint16_t); // Skip ACL length
             uint16_t cid = *p + (*(p + 1) << 8);
             p += sizeof(uint16_t); // Skip CID
-            l2cap->cb->proc_cb(conn_idx, cid, p, conn->rx_idx);
+            l2cap->cbs->proc_cb(conn_idx, cid, p, conn->rx_idx);
         }
     } else {
         // Recevie data from invalid connection
@@ -198,23 +205,22 @@ void eb_pl2cap_received(void *l2cap_buf, uint8_t conn_idx, uint16_t hdl_flags, u
     }
 }
 
-void eb_pl2cap_connected(void *l2cap_buf, uint8_t conn_idx, uint16_t conn_hdl, uint8_t role,
+void eb_pl2cap_connected(struct eb_l2cap *l2cap, uint8_t conn_idx, uint16_t conn_hdl, uint8_t role,
                          uint8_t *peer_addr, uint8_t peer_addr_type, uint8_t *local_addr, uint8_t local_addr_type)
 {
-    struct eb_l2cap *l2cap = (struct eb_l2cap *)l2cap_buf;
     EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
     struct eb_l2cap_conn *conn = set_l2cap_by_idx(l2cap, conn_idx, conn_hdl);
     EB_L2CAP_WARNING(conn, EB_L2CAP_DBG_ERR_NO_CONN);
     if (conn) {
+        conn->tx_idx = 0;
         conn->rx_remain_len = 0;
         conn->pending_acl_packets = 0;
-        l2cap->cb->connected_cb(conn_idx, role, peer_addr, peer_addr_type, local_addr, local_addr_type);
+        l2cap->cbs->connected_cb(conn_idx, role, peer_addr, peer_addr_type, local_addr, local_addr_type);
     }
 }
 
-void eb_pl2cap_disconnected(void *l2cap_buf, uint8_t conn_idx)
+void eb_pl2cap_disconnected(struct eb_l2cap *l2cap, uint8_t conn_idx)
 {
-    struct eb_l2cap *l2cap = (struct eb_l2cap *)l2cap_buf;
     EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
     struct eb_l2cap_conn *conn = get_l2cap_by_idx(l2cap, conn_idx);
     EB_L2CAP_WARNING(conn, EB_L2CAP_DBG_ERR_NO_CONN);
@@ -225,17 +231,15 @@ void eb_pl2cap_disconnected(void *l2cap_buf, uint8_t conn_idx)
         while (int_data) {
             struct eb_l2cap_send_data *p = &int_data->data;
             int_data = (struct eb_l2cap_send_data_internal *)int_data->next;
-            l2cap->cb->send_done_cb(p, EB_L2CAP_SD_DISCONNECT);
+            l2cap->cbs->send_done_cb(p, EB_L2CAP_SD_DISCONNECT);
         }
-        memset(conn, 0, sizeof(struct eb_l2cap_conn));
         conn->conn_hdl = EB_L2CAP_INVALID_HDL;
-        l2cap->cb->disconnected_cb(conn_idx);
+        l2cap->cbs->disconnected_cb(conn_idx);
     }
 }
 
-void eb_pl2cap_acl_cfg(void *l2cap_buf, uint16_t pkg_size, int pkg_num)
+void eb_pl2cap_acl_cfg(struct eb_l2cap *l2cap, uint16_t pkg_size, int pkg_num)
 {
-    struct eb_l2cap *l2cap = (struct eb_l2cap *)l2cap_buf;
     int i;
     for (i = 0; i < l2cap->max_connection; i++) {
         EB_L2CAP_WARNING(!get_l2cap_by_idx(l2cap, i), EB_L2CAP_DBG_ERR_STATUS);
@@ -245,9 +249,8 @@ void eb_pl2cap_acl_cfg(void *l2cap_buf, uint16_t pkg_size, int pkg_num)
     l2cap->total_num_le_acl_data_packets = pkg_num;
 }
 
-void eb_pl2cap_packets_completed(void *l2cap_buf, uint8_t conn_idx, int pkg_num)
+void eb_pl2cap_packets_completed(struct eb_l2cap *l2cap, uint8_t conn_idx, int pkg_num)
 {
-    struct eb_l2cap *l2cap = (struct eb_l2cap *)l2cap_buf;
     EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
     struct eb_l2cap_conn *conn = get_l2cap_by_idx(l2cap, conn_idx);
     if (conn) {
@@ -266,11 +269,10 @@ void eb_pl2cap_packets_completed(void *l2cap_buf, uint8_t conn_idx, int pkg_num)
     }
 }
 
-void eb_l2cap_sche_once(void *l2cap_buf)
+bool eb_l2cap_sche_once(struct eb_l2cap *l2cap)
 {
-    struct eb_l2cap *l2cap = (struct eb_l2cap *)l2cap_buf;
     EB_L2CAP_ERROR(l2cap, EB_L2CAP_DBG_ERR_PARAM);
-    int i;
+    int i, active_flag = false;
     for (i = 0; i < l2cap->max_connection; i++) {
         int idx = i + l2cap->conn_sent_idx;
         if (idx >= l2cap->max_connection) {
@@ -324,15 +326,16 @@ void eb_l2cap_sche_once(void *l2cap_buf)
                     l2cap->num_le_acl_data_packets--;
                     // pre_len = "0x02" + size(hdl_flags) + size(acl_len) = 5
                     const int pre_len = sizeof(uint8_t) + sizeof(uint16_t) * 2;
-                    l2cap->cb->send_cb(ps, pre_len + acl_len);
+                    l2cap->cbs->send_cb(ps, pre_len + acl_len);
                     if (conn->tx_idx >= conn->tx_len) {
                         EB_L2CAP_ERROR(conn->tx_idx == conn->tx_len, EB_L2CAP_DBG_ERR_UNSPE);
                         conn->tx_idx = 0;
                         eb_queue_pop(&conn->tx_list);
                         p->data.conn_idx = p->conn_idx;
                         p->data.seq_num = p->seq_num;
-                        l2cap->cb->send_done_cb(&p->data, EB_L2CAP_SD_SUCCESS);
+                        l2cap->cbs->send_done_cb(&p->data, EB_L2CAP_SD_SUCCESS);
                         send_flag = true;
+                        active_flag = true;
                     }
                     continue;
                 }
@@ -349,6 +352,7 @@ void eb_l2cap_sche_once(void *l2cap_buf)
             break;
         }
     }
+    return active_flag;
 }
 
 void eb_l2cap_configure(const struct eb_l2cap_cfg *cfg)

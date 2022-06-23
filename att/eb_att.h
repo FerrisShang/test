@@ -10,8 +10,6 @@
 #include "eb_config.h"
 #include "eb_att_opcode.h"
 
-#define EB_ATT_ASSERT          assert
-#define EB_ATT_WARNING(x)      do{if(!(x)){printf("Warning: %s@%d\n", __func__, __LINE__);}}while(0)
 #define EB_ATT_INVALID_HANDLE  0x0000
 #define EB_UUID_CMP(uuid1, uuid2) ((uuid1)->uuid_len != (uuid2)->uuid_len || memcmp((uuid1)->uuid, (uuid2)->uuid, (uuid1)->uuid_len))
 
