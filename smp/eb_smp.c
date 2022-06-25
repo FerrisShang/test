@@ -3,33 +3,30 @@
 #include "eb_smp.h"
 #include "eb_smp_rand.h"
 #include "eb_smp_alg.h"
+#include "eb_memory.h"
+#include "eb_debug.h"
+
+#define EB_SMP_ENV_MALLOC(size)      EB_MALLOC(size, EB_MALLOC_PRIO_CRITICAL)
+#define EB_SMP_RSP_MALLOC(size)      gatt->cbs->msg_malloc(size, EB_MALLOC_PRIO_HIGH)
+#define EB_SMP_REQ_MALLOC(size)      gatt->cbs->msg_malloc(size, EB_MALLOC_PRIO_MEDIUM)
+#define EB_SMP_FREE(p)               gatt->cbs->msg_free(p)
 
 #ifdef SMP_DEBUG
-#define SMP_PRINT(fmt, ...) printf(fmt, ##__VA_ARGS__)
-#define SMP_LOG(fmt, ...) SMP_PRINT("[SMP]"fmt, ##__VA_ARGS__)
-#define SMP_DUMP(msg,d,l) \
-    do { \
-        SMP_PRINT("[SMP]%s: ", msg); \
-        int i; \
-        for (i = 0; i < l; i++) \
-        { \
-            if(!(i%16)&&i){ \
-                SMP_PRINT("\n"); \
-            } \
-            SMP_PRINT("%02X ", ((uint8_t *)d)[i]); \
-        } \
-        SMP_PRINT("\n"); \
-    } while (0)
+#define EB_SMP_ERROR(exp, n)         EB_ERROR("[SMP] ", exp, n)
+#define EB_SMP_WARNING(exp, n)       EB_WARNING("[SMP] ", exp, n)
+#define EB_SMP_INFO(fmt, ...)        EB_INFO("[SMP] ", fmt, ##__VA_ARGS__)
+#define EB_SMP_DUMP(msg, buf, len)   EB_DUMP("[SMP] ", msg, buf, len)
 #else
-#define SMP_PRINT(fmt, ...)
-#define SMP_LOG(fmt, ...)
-#define SMP_DUMP(msg,d,l)
+#define EB_SMP_ERROR(exp, n)
+#define EB_SMP_WARNING(exp, n)
+#define EB_SMP_INFO(fmt, ...)
+#define EB_SMP_DUMP(msg, buf, len)
 #endif
 
 #define EB_SMP_DEF_CONN_NUM   0x4
 #define EB_SMP_MAX_CONN_NUM   0x8
 
-#define EB_SMP_INVALID_CONN_HDL 0xFFFF
+#define EB_SMP_INVALID_CONN_IDX 0xFF
 #define EB_SMP_CODE_NONE  0
 
 enum key_pending {
@@ -46,7 +43,6 @@ struct dist_pending {
 };
 
 struct eb_smp_conn {
-    uint16_t conn_hdl;  // conneciton handle
     uint8_t conn_idx;
     uint8_t pending_code;
     uint8_t pending_ltk;
@@ -79,11 +75,7 @@ struct eb_smp_conn {
 };
 
 struct eb_smp {
-    void (*send)(uint16_t conn_hdl, uint8_t *data, int len, void *usr_data);
-    void (*connected)(uint16_t conn_hdl, uint8_t role, void *usr_data);
-    void (*disconnected)(uint16_t conn_hdl, void *usr_data);
-    void (*proc)(uint16_t conn_hdl, struct smp_param *param, void *usr_data);
-    void (*ltk_resp)(uint16_t conn_hdl, uint8_t *key, void *usr_data);
+    const struct eb_smp_callbacks *cbs;
     void *usr_data;
     uint16_t max_connection;
     struct eb_smp_conn conn[0];
@@ -121,26 +113,24 @@ const static uint8_t key_gen_map[2][5][5] = { //[Role][Initiator][Responder]
 
 struct eb_smp *eb_smp_init(struct eb_smp_cfg *cfg, void *usr_data)
 {
-    EB_SMP_ASSERT(cfg);
-    EB_SMP_ASSERT(cfg->send);
-    EB_SMP_ASSERT(cfg->connected);
-    EB_SMP_ASSERT(cfg->disconnected);
-    EB_SMP_ASSERT(cfg->proc);
-    EB_SMP_ASSERT(cfg->ltk_resp);
+    EB_SMP_ERROR(cfg, 0);
+    EB_SMP_ERROR(cfg->cbs, 0);
+    EB_SMP_ERROR(cfg->cbs->send, 0);
+    EB_SMP_ERROR(cfg->cbs->connected, 0);
+    EB_SMP_ERROR(cfg->cbs->disconnected, 0);
+    EB_SMP_ERROR(cfg->cbs->proc, 0);
+    EB_SMP_ERROR(cfg->cbs->ltk_resp, 0);
     int max_connection = cfg->max_connection ? cfg->max_connection : EB_SMP_DEF_CONN_NUM;
     max_connection = max_connection < EB_SMP_MAX_CONN_NUM ? max_connection : EB_SMP_MAX_CONN_NUM;
-    struct eb_smp *smp = (struct eb_smp *)EB_SMP_MALLOC(sizeof(struct eb_smp) +
-                                                        sizeof(struct eb_smp_conn) * max_connection);
-    smp->send = cfg->send;
-    smp->connected = cfg->connected;
-    smp->disconnected = cfg->disconnected;
-    smp->proc = cfg->proc;
-    smp->ltk_resp = cfg->ltk_resp;
+    struct eb_smp *smp = (struct eb_smp *)EB_SMP_ENV_MALLOC(sizeof(struct eb_smp) +
+                                                            sizeof(struct eb_smp_conn) * max_connection);
+    EB_SMP_ERROR(smp, 0);
+    smp->cbs = cfg->cbs;
     smp->max_connection = max_connection;
     int i;
     for (i = 0; i < smp->max_connection; i++) {
         memset(&smp->conn[i], 0, sizeof(struct eb_smp_conn));
-        smp->conn[i].conn_hdl = EB_SMP_INVALID_CONN_HDL;
+        smp->conn[i].conn_idx = EB_SMP_INVALID_CONN_IDX;
         smp->conn[i].conn_idx = i;
     }
     return smp;
@@ -148,19 +138,20 @@ struct eb_smp *eb_smp_init(struct eb_smp_cfg *cfg, void *usr_data)
 
 static struct eb_smp *eb_smp_get_by_conn(struct eb_smp_conn *conn)
 {
+    if (conn->conn_idx == EB_SMP_INVALID_CONN_IDX) {
+        return NULL;
+    }
     conn -= conn->conn_idx;
     return (struct eb_smp *)((size_t)conn - offsetof(struct eb_smp, conn));
 }
 
-static struct eb_smp_conn *eb_smp_get_by_conn_hdl(struct eb_smp *smp, uint16_t conn_hdl)
+static struct eb_smp_conn *eb_smp_get_by_conn_idx(struct eb_smp *smp, uint8_t conn_idx)
 {
-    int i;
-    for (i = 0; i < smp->max_connection; i++) {
-        if (smp->conn[i].conn_hdl == conn_hdl) {
-            return &smp->conn[i];
-        }
+    if (conn_idx != EB_SMP_INVALID_CONN_IDX && smp->conn[conn_idx].conn_idx != EB_SMP_INVALID_CONN_IDX) {
+        return &smp->conn[conn_idx];
+    } else {
+        return NULL;
     }
-    return NULL;
 }
 
 static uint8_t keygen_method(uint8_t role, struct smp_pairing_request *req, struct smp_pairing_response *rsp)
@@ -186,33 +177,49 @@ bool smp_is_pairing(struct eb_smp_conn *conn)
     return memcmp((uint8_t *)&conn->pairing_req, zeros, 7);
 }
 
-static void smp_error_rsp(struct eb_smp *smp, uint16_t conn_hdl, uint8_t reason)
+static uint32_t smp_error_rsp(struct eb_smp *smp, uint8_t conn_idx, uint8_t reason)
 {
-    struct eb_smp_conn *conn = eb_smp_get_by_conn_hdl(smp, conn_hdl);
+    struct eb_smp_conn *conn = eb_smp_get_by_conn_idx(smp, conn_idx);
     if (conn) {
         conn->pending_code = EB_SMP_CODE_NONE;
-        struct smp_pairing_failed pairing_failed = { SMP_PAIRING_FAILED, reason };
-        smp->send(conn_hdl, (uint8_t *)&pairing_failed, sizeof(struct smp_pairing_failed), smp->usr_data);
+        struct smp_pairing_failed *pairing_failed = EB_SMP_ENV_MALLOC(sizeof(struct smp_pairing_failed));
+        if (pairing_failed) {
+            pairing_failed->code = SMP_PAIRING_FAILED;
+            pairing_failed->reason = reason;
+            smp->cbs->send(conn_idx, (uint8_t *)&pairing_failed, sizeof(struct smp_pairing_failed), smp->usr_data);
+            return EB_SMP_ERR_NO_ERROR;
+        } else {
+            return EB_SMP_ERR_INSUFFICIENT_RESOURCES;
+        }
+    } else {
+        return EB_SMP_ERR_NO_CONNECTION;
     }
 }
 
-void eb_smp_pairing_request(struct eb_smp *smp, uint16_t conn_hdl, struct smp_pairing_request *req)
+uint32_t eb_smp_pairing_request(struct eb_smp *smp, uint8_t conn_idx, struct smp_pairing_request *req)
 {
-    // TODO
-}
-
-void eb_smp_pairing_abort(struct eb_smp *smp, uint16_t conn_hdl, uint8_t reason)
-{
-    smp_error_rsp(smp, conn_hdl, reason);
-}
-
-void eb_smp_pairing_response(struct eb_smp *smp, uint16_t conn_hdl, struct smp_pairing_response *rsp)
-{
-    struct eb_smp_conn *conn = eb_smp_get_by_conn_hdl(smp, conn_hdl);
-    if (conn->device_role != EB_SMP_ROLE_SLAVE) {
-        return;
+    struct eb_smp_conn *conn = eb_smp_get_by_conn_idx(smp, conn_idx);
+    if (conn) {
+        // TODO
+        return EB_SMP_ERR_NO_ERROR;
+    } else {
+        return EB_SMP_ERR_NO_CONNECTION;
     }
-    if (conn && conn->pending_code == SMP_PAIRING_REQUEST) {
+}
+
+uint32_t eb_smp_pairing_abort(struct eb_smp *smp, uint8_t conn_idx, uint8_t reason)
+{
+    return smp_error_rsp(smp, conn_idx, reason);
+}
+
+uint32_t eb_smp_pairing_response(struct eb_smp *smp, uint8_t conn_idx, struct smp_pairing_response *rsp)
+{
+    struct eb_smp_conn *conn = eb_smp_get_by_conn_idx(smp, conn_idx);
+
+    if (!conn) {
+        return EB_SMP_ERR_NO_CONNECTION;
+    }
+    if (conn->device_role != EB_SMP_ROLE_SLAVE && conn->pending_code == SMP_PAIRING_REQUEST) {
         // Fix parameters
         rsp->code = SMP_PAIRING_RESPONSE;
         if (rsp->maximum_encryption_key_size < 7) {
@@ -224,7 +231,7 @@ void eb_smp_pairing_response(struct eb_smp *smp, uint16_t conn_hdl, struct smp_p
         // save data
         conn->pairing_rsp = *rsp;
         // send smp data
-        smp->send(conn_hdl, (uint8_t *)rsp, sizeof(struct smp_pairing_response), smp->usr_data);
+        smp->cbs->send(conn_idx, (uint8_t *)rsp, sizeof(struct smp_pairing_response), smp->usr_data);
         uint8_t m = keygen_method(conn->device_role, &conn->pairing_req, &conn->pairing_rsp);
         const static uint8_t pending_map[5] = {
             EB_SMP_KEY_TYPE_OOB, EB_SMP_KEY_TYPE_NONE, EB_SMP_KEY_TYPE_DIS,
@@ -238,6 +245,8 @@ void eb_smp_pairing_response(struct eb_smp *smp, uint16_t conn_hdl, struct smp_p
             memset(conn->tk, 0, 16);
             // do nothing.. wait for confirm value.
         }
+    } else {
+        return EB_SMP_ERR_INVALID_STATE;
     }
 }
 
@@ -248,13 +257,13 @@ static bool smp_pairing_request_proc(struct eb_smp_conn *conn, const uint8_t *pa
         struct smp_pairing_request *req = (struct smp_pairing_request *)payload;
         conn->pairing_req = *req;
         if (conn->pairing_req.io_capability > KeyboardDisplay) {
-            smp_error_rsp(smp, conn->conn_hdl, SMP_ERR_INVALID_PARAMETERS);
+            smp_error_rsp(smp, conn->conn_idx, SMP_ERR_INVALID_PARAMETERS);
         }
         struct smp_param param = {
             .evt_id = EB_SMP_PAIRING_REQ,
             .pairing_req = req,
         };
-        smp->proc(conn->conn_hdl, &param, smp->usr_data);
+        smp->cbs->proc(conn->conn_idx, &param, smp->usr_data);
     }
     return true;
 }
@@ -272,7 +281,7 @@ static bool smp_pairing_response_proc(struct eb_smp_conn *conn, const uint8_t *p
 static void gen_confirm_value_cb(uint8_t *confirm_value, void *p)
 {
     struct eb_smp_conn *conn = (struct eb_smp_conn *)p;
-    if (conn->conn_hdl == EB_SMP_INVALID_CONN_HDL) {
+    if (conn->conn_idx == EB_SMP_INVALID_CONN_IDX) {
         return;
     }
     if (conn->pending_code != SMP_PAIRING_CONFIRM) {
@@ -284,13 +293,13 @@ static void gen_confirm_value_cb(uint8_t *confirm_value, void *p)
     memcpy(confirm_msg.value, confirm_value, 16);
     struct eb_smp *smp = eb_smp_get_by_conn(conn);
     conn->pending_code = EB_SMP_CODE_NONE;
-    smp->send(conn->conn_hdl, (uint8_t *)&confirm_msg, sizeof(struct smp_pairing_confirm), smp->usr_data);
+    smp->cbs->send(conn->conn_idx, (uint8_t *)&confirm_msg, sizeof(struct smp_pairing_confirm), smp->usr_data);
 }
 
 static void gen_pairing_rand_cb(uint8_t *rand128, void *p)
 {
     struct eb_smp_conn *conn = (struct eb_smp_conn *)p;
-    if (conn->conn_hdl == EB_SMP_INVALID_CONN_HDL) {
+    if (conn->conn_idx == EB_SMP_INVALID_CONN_IDX) {
         return;
     }
     memcpy(&conn->local_rand, rand128, 16);
@@ -345,7 +354,7 @@ static void gen_stk_cb(uint8_t *stk, void *p)
     }
     if (conn->pending_ltk) {
         struct eb_smp *smp = eb_smp_get_by_conn(conn);
-        smp->ltk_resp(conn->conn_hdl, conn->stk, smp->usr_data);
+        smp->cbs->ltk_resp(conn->conn_idx, conn->stk, smp->usr_data);
         conn->pending_ltk = false;
     } else {
         conn->pending_ltk = true;
@@ -355,7 +364,7 @@ static void gen_stk_cb(uint8_t *stk, void *p)
 static void legacy_check_confirm_value_cb(uint8_t *confirm_value, void *p)
 {
     struct eb_smp_conn *conn = (struct eb_smp_conn *)p;
-    if (conn->conn_hdl == EB_SMP_INVALID_CONN_HDL) {
+    if (conn->conn_idx == EB_SMP_INVALID_CONN_IDX) {
         return;
     }
     if (conn->pending_code != SMP_PAIRING_RANDOM) {
@@ -369,7 +378,7 @@ static void legacy_check_confirm_value_cb(uint8_t *confirm_value, void *p)
         rand_msg.code = SMP_PAIRING_RANDOM;
         memcpy(rand_msg.value, conn->local_rand, 16);
         conn->pending_code = EB_SMP_CODE_NONE;
-        smp->send(conn->conn_hdl, (uint8_t *)&rand_msg, sizeof(struct smp_pairing_random), smp->usr_data);
+        smp->cbs->send(conn->conn_idx, (uint8_t *)&rand_msg, sizeof(struct smp_pairing_random), smp->usr_data);
         // Generate STK
         uint8_t *init_rand, *resp_rand;
         if (conn->device_role == EB_SMP_ROLE_MASTER) {
@@ -381,10 +390,10 @@ static void legacy_check_confirm_value_cb(uint8_t *confirm_value, void *p)
         }
         smp_alg_s1(conn->tk, init_rand, resp_rand, gen_stk_cb, conn);
     } else {
-        SMP_LOG("Confirm value check failed\n");
-        SMP_DUMP(" REM", conn->remote_cfm, 16);
-        SMP_DUMP(" CAL", confirm_value, 16);
-        smp_error_rsp(smp, conn->conn_hdl, SMP_ERR_CONFIRM_VALUE_FAILED);
+        EB_SMP_INFO("Confirm value check failed\n");
+        EB_SMP_DUMP("REM ", conn->remote_cfm, 16);
+        EB_SMP_DUMP("CAL ", confirm_value, 16);
+        smp_error_rsp(smp, conn->conn_idx, SMP_ERR_CONFIRM_VALUE_FAILED);
     }
 }
 
@@ -473,19 +482,19 @@ const static struct {
     { SMP_PAIRING_KEY_NOTIFY,     smp_pairing_key_notify_proc     },
 };
 
-void eb_smp_security_req(struct eb_smp *smp, uint16_t conn_hdl, uint8_t auth)
+uint32_t eb_smp_security_req(struct eb_smp *smp, uint8_t conn_idx, uint8_t auth)
 {
-    struct eb_smp_conn *conn = eb_smp_get_by_conn_hdl(smp, conn_hdl);
+    struct eb_smp_conn *conn = eb_smp_get_by_conn_idx(smp, conn_idx);
     if (conn) {
         struct smp_security_request param = { SMP_SECURITY_REQUEST, auth };
-        smp->send(conn_hdl, (uint8_t *)&param, sizeof(struct smp_security_request), smp->usr_data);
+        smp->cbs->send(conn_idx, (uint8_t *)&param, sizeof(struct smp_security_request), smp->usr_data);
     }
 }
 
-void eb_smpp_received(struct eb_smp *smp, uint16_t conn_hdl, uint8_t *payload, uint16_t datalen)
+void eb_psmp_received(struct eb_smp *smp, uint8_t conn_idx, uint8_t *payload, uint16_t datalen)
 {
     struct smp_packet *smp_packet = (struct smp_packet *)payload;
-    struct eb_smp_conn *conn = eb_smp_get_by_conn_hdl(smp, conn_hdl);
+    struct eb_smp_conn *conn = eb_smp_get_by_conn_idx(smp, conn_idx);
     if (conn) {
         size_t i;
         for (i = 0; i < sizeof(smp_proc_handler) / sizeof(smp_proc_handler[0]); i++) {
@@ -498,25 +507,25 @@ void eb_smpp_received(struct eb_smp *smp, uint16_t conn_hdl, uint8_t *payload, u
             }
         }
         // Not support
-        smp_error_rsp(smp, conn_hdl, SMP_ERR_COMMAND_NOT_SUPPORTED);
+        smp_error_rsp(smp, conn_idx, SMP_ERR_COMMAND_NOT_SUPPORTED);
     }
 }
 
-void eb_smpp_connected(struct eb_smp *smp, uint16_t conn_hdl, uint8_t role,
+void eb_psmp_connected(struct eb_smp *smp, uint8_t conn_idx, uint8_t role,
                        uint8_t *peer_addr, uint8_t peer_addr_type, uint8_t *local_addr, uint8_t local_addr_type)
 {
-    SMP_LOG(" Connected. peer type=%d, local type=%d\n", peer_addr_type, local_addr_type);
-    SMP_DUMP("  Peer addr", peer_addr, 6);
-    SMP_DUMP(" Local addr", local_addr, 6);
-    if (!eb_smp_get_by_conn_hdl(smp, conn_hdl)) {
+    EB_SMP_INFO("Connected. peer type=%d, local type=%d\n", peer_addr_type, local_addr_type);
+    EB_SMP_DUMP("Peer addr: ", peer_addr, 6);
+    EB_SMP_DUMP("Local addr: ", local_addr, 6);
+    if (!eb_smp_get_by_conn_idx(smp, conn_idx)) {
         int i;
         for (i = 0; i < smp->max_connection; i++) {
             struct eb_smp_conn *conn = (struct eb_smp_conn *)&smp->conn[i];
-            if (conn->conn_hdl == EB_SMP_INVALID_CONN_HDL) {
-                SMP_LOG(" conn index = %d\n", i);
+            if (conn->conn_idx == EB_SMP_INVALID_CONN_IDX) {
+                EB_SMP_INFO(" conn index = %d\n", i);
                 memset(conn, 0, sizeof(struct eb_smp_conn));
                 conn->conn_idx = i;
-                conn->conn_hdl = conn_hdl;
+                conn->conn_idx = conn_idx;
                 conn->device_role = role;
                 if (role == EB_SMP_ROLE_MASTER) {
                     memcpy(conn->init_addr, local_addr, 6);
@@ -529,30 +538,30 @@ void eb_smpp_connected(struct eb_smp *smp, uint16_t conn_hdl, uint8_t role,
                     memcpy(conn->resp_addr, local_addr, 6);
                     conn->resp_addr_type = local_addr_type;
                 }
-                smp->connected(conn_hdl, role, smp->usr_data);
+                smp->cbs->connected(conn_idx, role, smp->usr_data);
                 break;
             }
         }
     }
 }
 
-void eb_smpp_disconnected(struct eb_smp *smp, uint16_t conn_hdl)
+void eb_psmp_disconnected(struct eb_smp *smp, uint8_t conn_idx)
 {
-    struct eb_smp_conn *conn = eb_smp_get_by_conn_hdl(smp, conn_hdl);
-    SMP_LOG(" Disconnected. conn index = %d\n", conn ? conn->conn_idx : -1);
+    struct eb_smp_conn *conn = eb_smp_get_by_conn_idx(smp, conn_idx);
+    EB_SMP_INFO(" Disconnected. conn index = %d\n", conn ? conn->conn_idx : -1);
     if (conn) {
-        conn->conn_hdl = EB_SMP_INVALID_CONN_HDL;
-        smp->disconnected(conn_hdl, smp->usr_data);
+        conn->conn_idx = EB_SMP_INVALID_CONN_IDX;
+        smp->cbs->disconnected(conn_idx, smp->usr_data);
     }
 }
 
-void eb_smpp_ltk_request(struct eb_smp *smp, uint16_t conn_hdl, uint8_t *rand, uint16_t ediv)
+void eb_psmp_ltk_request(struct eb_smp *smp, uint8_t conn_idx, uint8_t *rand, uint16_t ediv)
 {
-    struct eb_smp_conn *conn = eb_smp_get_by_conn_hdl(smp, conn_hdl);
+    struct eb_smp_conn *conn = eb_smp_get_by_conn_idx(smp, conn_idx);
     if (conn) {
         if (smp_is_pairing(conn)) {
             if (conn->pending_ltk) {
-                smp->ltk_resp(conn->conn_hdl, conn->stk, smp->usr_data);
+                smp->cbs->ltk_resp(conn->conn_idx, conn->stk, smp->usr_data);
                 conn->pending_ltk = false;
             } else {
                 conn->pending_ltk = true;
@@ -563,9 +572,9 @@ void eb_smpp_ltk_request(struct eb_smp *smp, uint16_t conn_hdl, uint8_t *rand, u
     }
 }
 
-void eb_smpp_encrypt_changed(struct eb_smp *smp, uint16_t conn_hdl, uint8_t enabled, uint8_t key_size)
+void eb_psmp_encrypt_changed(struct eb_smp *smp, uint8_t conn_idx, uint8_t enabled, uint8_t key_size)
 {
-    struct eb_smp_conn *conn = eb_smp_get_by_conn_hdl(smp, conn_hdl);
+    struct eb_smp_conn *conn = eb_smp_get_by_conn_idx(smp, conn_idx);
     if (conn) {
         // TODO: send to uplayer
         if (conn->local_dist.enc) {
@@ -574,7 +583,7 @@ void eb_smpp_encrypt_changed(struct eb_smp *smp, uint16_t conn_hdl, uint8_t enab
                 SMP_ENCRYPTION_INFORMATION,
                 {0xcd, 0x90, 0x18, 0xbd, 0xc2, 0xe3, 0xd5, 0x22, 0x79, 0xc3, 0x55, 0x4f, 0x07, 0x4b, 0xd8, 0x8d,},
             };
-            smp->send(conn_hdl, (uint8_t *)&param, sizeof(struct smp_encryption_information), smp->usr_data);
+            smp->cbs->send(conn_idx, (uint8_t *)&param, sizeof(struct smp_encryption_information), smp->usr_data);
         }
         if (conn->local_dist.master_id) {
             conn->local_dist.master_id = false;
@@ -583,7 +592,7 @@ void eb_smpp_encrypt_changed(struct eb_smp *smp, uint16_t conn_hdl, uint8_t enab
                 0xf65c,
                 {0x29, 0x1e, 0x19, 0x46, 0x04, 0x68, 0x52, 0xe0}
             };
-            smp->send(conn_hdl, (uint8_t *)&param, sizeof(struct smp_central_identification), smp->usr_data);
+            smp->cbs->send(conn_idx, (uint8_t *)&param, sizeof(struct smp_central_identification), smp->usr_data);
         }
         if (conn->local_dist.id_info) {
             conn->local_dist.id_info = false;
@@ -591,7 +600,7 @@ void eb_smpp_encrypt_changed(struct eb_smp *smp, uint16_t conn_hdl, uint8_t enab
                 SMP_IDENTITY_INFORMATION,
                 {0x5A, 4, 224, 1, 123, 123, 4, 12, 1, 214, 253, 3, 143, 234, 124,},
             };
-            smp->send(conn_hdl, (uint8_t *)&param, sizeof(struct smp_identity_information), smp->usr_data);
+            smp->cbs->send(conn_idx, (uint8_t *)&param, sizeof(struct smp_identity_information), smp->usr_data);
         }
         if (conn->local_dist.id_addr) {
             conn->local_dist.id_addr = false;
@@ -600,7 +609,7 @@ void eb_smpp_encrypt_changed(struct eb_smp *smp, uint16_t conn_hdl, uint8_t enab
                 0x01,
                 {0xC0, 11, 10, 10, 11, 0xc0},
             };
-            smp->send(conn_hdl, (uint8_t *)&param, sizeof(struct smp_identity_addr_info), smp->usr_data);
+            smp->cbs->send(conn_idx, (uint8_t *)&param, sizeof(struct smp_identity_addr_info), smp->usr_data);
         }
     }
 }

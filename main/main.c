@@ -402,7 +402,7 @@ int main(void)
         gatt_send_cb, gatt_proc_cb, gatt_conn_cb, gatt_disconn_cb, gatt_msg_malloc_cb, gatt_msg_free_cb,
     };
     struct eb_gatt_param gatt_param = {
-        &gatt_cbs, 30, 517, 8, 4
+        &gatt_cbs, 517, 30, 8, 4
     };
     gatt = eb_gatt_init(&gatt_param);
     att_db_init();
