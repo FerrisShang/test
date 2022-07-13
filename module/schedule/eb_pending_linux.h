@@ -4,6 +4,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <assert.h>
+#include "eb_memory.h"
+#include "eb_debug.h"
 
 #define EB_PENDING_MALLOC malloc
 #define EB_PENDING_FREE   free

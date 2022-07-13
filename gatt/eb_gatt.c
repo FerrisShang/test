@@ -18,7 +18,7 @@
 #define EB_GATT_INFO(fmt, ...)        EB_INFO("[GATT] ", fmt, ##__VA_ARGS__)
 #define EB_GATT_DUMP(msg, buf, len)   EB_DUMP("[GATT] ", msg, buf, len)
 
-#define EB_GATT_ENV_MALLOC(size)      EB_MALLOC(size, EB_MALLOC_PRIO_CRITICAL)
+#define EB_GATT_ENV_MALLOC(size)      EB_MALLOC(size)
 #define EB_GATT_RSP_MALLOC(size)      gatt->cbs->msg_malloc(size, EB_MALLOC_PRIO_HIGH)
 #define EB_GATT_REQ_MALLOC(size)      gatt->cbs->msg_malloc(size, EB_MALLOC_PRIO_MEDIUM)
 #define EB_GATT_FREE(p)               gatt->cbs->msg_free(p)

@@ -4,9 +4,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include "eb_memory.h"
+#include "eb_debug.h"
 
-#define EB_H4TL_MALLOC malloc
-#define EB_H4TL_ASSERT assert
+#define EB_H4TL_MALLOC EB_MALLOC
+#define EB_H4TL_ASSERT EB_ASSERT
 
 #define HCI_BUFFER_SIZE 0x1000
 

@@ -3,7 +3,7 @@
 #include "eb_memory.h"
 #include "eb_debug.h"
 
-#define EB_ATT_ENV_MALLOC(size)      EB_MALLOC(size, EB_MALLOC_PRIO_CRITICAL)
+#define EB_ATT_ENV_MALLOC(size)      EB_MALLOC(size)
 #define EB_ATT_ENV_FREE              EB_FREE
 #define EB_ATT_ERROR(exp, n)         EB_ERROR("[ATT] ", exp, n)
 #define EB_ATT_WARNING(exp, n)       EB_WARNING("[ATT] ", exp, n)

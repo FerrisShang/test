@@ -12,22 +12,16 @@
 #include "eb_gatt.h"
 #include "eb_att.h"
 #include "eb_memory.h"
-#include "linux_udp_client.h"
-
-#define HCI_UDP
 
 #ifdef HCI_UDP
 #define IP "127.0.0.1"
 #define PORT 60000
 #else
-#include "linux_usb_hci.h"
-struct linux_usb_hci *usb_hci;
 #endif
 
 #define DUMP(d,l) do{int i;for(i=0;i<(int)l;i++)printf("%02X ", ((uint8_t*)d)[i]); puts("");}while(0)
 
 #define LOCAL_RAND_ADDR {0xC0, 11, 10, 10, 11, 0xC0}
-struct linux_udp_client *udp_hci;
 struct eb_h4tl *h4tl;
 struct eb_hci *hci;
 struct eb_l2cap *l2cap;
@@ -95,7 +89,8 @@ void h4tl_send_cb(uint8_t *data, size_t len, void *p)
     #ifdef HCI_UDP
     udp_client_send(udp_hci, data, len);
     #else
-    usb_hci_send(usb_hci, data, len);
+    void hci_send(uint8_t *data, int len);
+    hci_send(data, len);
     #endif
 }
 
@@ -119,7 +114,7 @@ void main_callback(void *p)
     } while (active);
 }
 
-static void hci_send(uint8_t *data, int len, void *usr_data)
+static void _hci_send(uint8_t *data, int len, void *usr_data)
 {
     eb_h4tl_send(h4tl, data, len);
 }
@@ -377,18 +372,48 @@ void encrypt_data(const uint8_t *key, const uint8_t *plaintext, void *p)
 }
 #endif
 
-int main(void)
+extern void rw_ke_mem_init(uint8_t type, uint8_t* heap, uint16_t heap_size);
+uint32_t mem_buf[0x1000];
+
+void hci_receive_handler(uint8_t data)
 {
+    static uint8_t buf[1024];
+    static uint16_t idx;
+    static uint16_t remain_len = 1;
+
+    buf[idx++] = data;
+    remain_len--;
+    if (buf[0] == 0x04 && idx == 1){
+        remain_len = 2;
+    } else if (buf[0] == 0x04 && idx == 3){
+        remain_len = buf[2];
+    } else if (buf[0] == 0x02 && idx == 1){
+        remain_len = 4;
+    } else if (buf[0] == 0x02 && idx == 5){
+        remain_len = buf[3] + (buf[4] << 8);
+    }
+    if(remain_len == 0){
+        void eb_h4tl_received(struct eb_h4tl *h4tl, uint8_t *data, size_t len);
+        eb_h4tl_received(h4tl, buf, idx);
+        remain_len = 1;
+        idx = 0;
+        eb_sche_event_set(sche, EB_EVENT_MAIN);
+    }
+    // struct eb_h4tl *h4tl, uint8_t *data, size_t len)
+}
+
+void easy_init(void)
+{
+    rw_ke_mem_init(0, (uint8_t*)mem_buf, sizeof(mem_buf));
     sche = eb_schedule_create();
     eb_sche_event_callback_set(sche, EB_EVENT_MAIN, main_callback, NULL);
     #ifdef HCI_UDP
     udp_hci = udp_client_create(IP, PORT, hci_recv_cb, NULL);
     #else
-    usb_hci = usb_hci_create(0x0a5c, 0x21ec, hci_recv_cb, NULL);
     #endif
 
     h4tl = eb_h4tl_create(h4tl_send_cb, h4tl_recv_cb, NULL, NULL);
-    struct eb_hci_cfg hci_cfg = { hci_send, hci_proc_cmp, hci_proc_evt, hci_proc_le_evt, NULL };
+    struct eb_hci_cfg hci_cfg = { _hci_send, hci_proc_cmp, hci_proc_evt, hci_proc_le_evt, NULL };
     hci = eb_hci_init(&hci_cfg, NULL);
     const struct eb_l2cap_callbacks l2cap_cbs = {
         l2cap_send, l2cap_send_done_cb, l2cap_proc, l2cap_connected, l2cap_disconnected,
@@ -418,7 +443,5 @@ int main(void)
 
     eb_hci_cmd_send(hci, HCI_RESET, NULL);
     eb_schedule(sche);
-
-    return 0;
 }
 

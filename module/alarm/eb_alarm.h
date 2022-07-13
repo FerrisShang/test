@@ -5,10 +5,12 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <stdbool.h>
+#include "eb_memory.h"
+#include "eb_debug.h"
 
-#define EB_ALARM_MALLOC malloc
-#define EB_ALARM_FREE   free
-#define EB_ALARM_ASSERT assert
+#define EB_ALARM_MALLOC EB_MALLOC
+#define EB_ALARM_FREE   EB_FREE
+#define EB_ALARM_ASSERT EB_ASSERT
 
 #define EB_ALARM_MAX 0x1000000
 

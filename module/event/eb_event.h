@@ -5,10 +5,12 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <assert.h>
+#include "eb_memory.h"
+#include "eb_debug.h"
 
-#define EB_EVENT_MALLOC malloc
-#define EB_EVENT_FREE   free
-#define EB_EVENT_ASSERT assert
+#define EB_EVENT_MALLOC EB_MALLOC
+#define EB_EVENT_FREE   EB_FREE
+#define EB_EVENT_ASSERT EB_ASSERT
 
 struct eb_event;
 typedef void (*eb_event_cb_t)(void *p);

@@ -10,7 +10,7 @@
 #define EB_L2CAP_INFO(fmt, ...)        EB_INFO("[L2CAP] ", fmt, ##__VA_ARGS__)
 #define EB_L2CAP_DUMP(msg, buf, len)   EB_DUMP("[L2CAP] ", msg, buf, len)
 
-#define EB_L2CAP_ENV_MALLOC(size)      EB_MALLOC(size, EB_MALLOC_PRIO_CRITICAL)
+#define EB_L2CAP_ENV_MALLOC(size)      EB_MALLOC(size)
 #define EB_L2CAP_FREE(p)               EB_FREE(p)
 
 #define EB_L2CAP_INVALID_HDL    0xFF

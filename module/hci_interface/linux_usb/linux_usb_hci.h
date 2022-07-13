@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <assert.h>
+#include "eb_memory.h"
+#include "eb_debug.h"
 
 #define LINUX_USB_HCI_MALLOC malloc
 #define LINUX_USB_HCI_ASSERT assert

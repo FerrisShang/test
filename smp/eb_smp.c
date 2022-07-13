@@ -6,7 +6,7 @@
 #include "eb_memory.h"
 #include "eb_debug.h"
 
-#define EB_SMP_ENV_MALLOC(size)      EB_MALLOC(size, EB_MALLOC_PRIO_CRITICAL)
+#define EB_SMP_ENV_MALLOC(size)      EB_MALLOC(size)
 #define EB_SMP_RSP_MALLOC(size)      gatt->cbs->msg_malloc(size, EB_MALLOC_PRIO_HIGH)
 #define EB_SMP_REQ_MALLOC(size)      gatt->cbs->msg_malloc(size, EB_MALLOC_PRIO_MEDIUM)
 #define EB_SMP_FREE(p)               gatt->cbs->msg_free(p)
@@ -248,6 +248,7 @@ uint32_t eb_smp_pairing_response(struct eb_smp *smp, uint8_t conn_idx, struct sm
     } else {
         return EB_SMP_ERR_INVALID_STATE;
     }
+    return EB_SMP_ERR_NO_ERROR;
 }
 
 static bool smp_pairing_request_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)

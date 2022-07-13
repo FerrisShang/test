@@ -5,9 +5,11 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <assert.h>
+#include "eb_memory.h"
+#include "eb_debug.h"
 
-#define EB_BRINGBUF_MALLOC malloc
-#define EB_BRINGBUF_ASSERT assert
+#define EB_BRINGBUF_MALLOC EB_MALLOC
+#define EB_BRINGBUF_ASSERT EB_ASSERT
 
 typedef size_t br_size_t;
 

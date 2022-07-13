@@ -4,13 +4,15 @@
 
 #include <stdlib.h>
 #include <assert.h>
+#include "eb_memory.h"
+#include "eb_debug.h"
 #include "eb_smp_aes.h"
 
 // #define SMP_ALG_DEBUG
 
-#define EB_SMP_ALG_MALLOC  malloc
-#define EB_SMP_ALG_FREE    free
-#define EB_SMP_ALG_ASSERT  assert
+#define EB_SMP_ALG_MALLOC  EB_MALLOC
+#define EB_SMP_ALG_FREE    EB_FREE
+#define EB_SMP_ALG_ASSERT  EB_ASSERT
 
 // Big endian(same as byte order received from hci)
 void smp_alg_c1(

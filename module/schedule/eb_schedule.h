@@ -3,11 +3,12 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include "eb_memory.h"
 #include "eb_schedule_config.h"
 #include "eb_timer.h"
 
-#define EB_SCHE_MALLOC malloc
-#define EB_SCHE_ASSERT assert
+#define EB_SCHE_MALLOC EB_MALLOC
+#define EB_SCHE_ASSERT EB_ASSERT
 
 typedef eb_timer_t eb_sche_timer_t;
 struct eb_sche;

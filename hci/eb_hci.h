@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#include "eb_memory.h"
+#include "eb_debug.h"
 #include "eb_hci_command.h"
 #include "eb_hci_event.h"
 #include "eb_hci_cmd_cmp.h"
@@ -12,9 +14,9 @@
 #include "eb_hci_version.h"
 #include "eb_hci_manufacturer_name.h"
 
-#define EB_HCI_MALLOC malloc
-#define EB_HCI_FREE   free
-#define EB_HCI_ASSERT assert
+#define EB_HCI_MALLOC EB_MALLOC
+#define EB_HCI_FREE   EB_FREE
+#define EB_HCI_ASSERT EB_ASSERT
 
 struct eb_hci;
 
