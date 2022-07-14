@@ -251,7 +251,7 @@ uint32_t eb_smp_pairing_response(struct eb_smp *smp, uint8_t conn_idx, struct sm
     return EB_SMP_ERR_NO_ERROR;
 }
 
-static bool smp_pairing_request_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_pairing_request_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     struct eb_smp *smp = eb_smp_get_by_conn(conn);
     if (conn->device_role == EB_SMP_ROLE_SLAVE) {
@@ -269,7 +269,7 @@ static bool smp_pairing_request_proc(struct eb_smp_conn *conn, const uint8_t *pa
     return true;
 }
 
-static bool smp_pairing_response_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_pairing_response_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     if (conn->device_role == EB_SMP_ROLE_MASTER) {
         struct smp_pairing_response *param = (struct smp_pairing_response *)payload;
@@ -309,7 +309,7 @@ static void gen_pairing_rand_cb(uint8_t *rand128, void *p)
                gen_confirm_value_cb, p);
 }
 
-static bool smp_pairing_confirm_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_pairing_confirm_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     struct smp_pairing_confirm *param = (struct smp_pairing_confirm *)payload;
     memcpy(conn->remote_cfm, param->value, 16);
@@ -398,7 +398,7 @@ static void legacy_check_confirm_value_cb(uint8_t *confirm_value, void *p)
     }
 }
 
-static bool smp_pairing_random_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_pairing_random_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     struct smp_pairing_random *param = (struct smp_pairing_random *)payload;
     if (conn->device_role == EB_SMP_ROLE_MASTER) {
@@ -413,52 +413,52 @@ static bool smp_pairing_random_proc(struct eb_smp_conn *conn, const uint8_t *pay
     return true;
 }
 
-static bool smp_pairing_failed_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_pairing_failed_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     return false;
 }
 
-static bool smp_encryption_information_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_encryption_information_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     return true;
 }
 
-static bool smp_central_identification_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_central_identification_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     return true;
 }
 
-static bool smp_identity_information_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_identity_information_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     return true;
 }
 
-static bool smp_identity_addr_info_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_identity_addr_info_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     return true;
 }
 
-static bool smp_signing_information_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_signing_information_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     return true;
 }
 
-static bool smp_security_request_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_security_request_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     return false;
 }
 
-static bool smp_pairing_public_key_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_pairing_public_key_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     return false;
 }
 
-static bool smp_pairing_dhkey_check_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_pairing_dhkey_check_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     return false;
 }
 
-static bool smp_pairing_key_notify_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
+static bool eb_smp_pairing_key_notify_proc(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen)
 {
     return false;
 }
@@ -467,20 +467,20 @@ const static struct {
     uint8_t code;
     bool(*cb)(struct eb_smp_conn *conn, const uint8_t *payload, uint16_t datalen);
 } smp_proc_handler[] = {
-    { SMP_PAIRING_REQUEST,        smp_pairing_request_proc        },
-    { SMP_PAIRING_RESPONSE,       smp_pairing_response_proc       },
-    { SMP_PAIRING_CONFIRM,        smp_pairing_confirm_proc        },
-    { SMP_PAIRING_RANDOM,         smp_pairing_random_proc         },
-    { SMP_PAIRING_FAILED,         smp_pairing_failed_proc         },
-    { SMP_ENCRYPTION_INFORMATION, smp_encryption_information_proc },
-    { SMP_CENTRAL_IDENTIFICATION, smp_central_identification_proc },
-    { SMP_IDENTITY_INFORMATION,   smp_identity_information_proc   },
-    { SMP_IDENTITY_ADDR_INFO,     smp_identity_addr_info_proc     },
-    { SMP_SIGNING_INFORMATION,    smp_signing_information_proc    },
-    { SMP_SECURITY_REQUEST,       smp_security_request_proc       },
-    { SMP_PAIRING_PUBLIC_KEY,     smp_pairing_public_key_proc     },
-    { SMP_PAIRING_DHKEY_CHECK,    smp_pairing_dhkey_check_proc    },
-    { SMP_PAIRING_KEY_NOTIFY,     smp_pairing_key_notify_proc     },
+    { SMP_PAIRING_REQUEST,        eb_smp_pairing_request_proc        },
+    { SMP_PAIRING_RESPONSE,       eb_smp_pairing_response_proc       },
+    { SMP_PAIRING_CONFIRM,        eb_smp_pairing_confirm_proc        },
+    { SMP_PAIRING_RANDOM,         eb_smp_pairing_random_proc         },
+    { SMP_PAIRING_FAILED,         eb_smp_pairing_failed_proc         },
+    { SMP_ENCRYPTION_INFORMATION, eb_smp_encryption_information_proc },
+    { SMP_CENTRAL_IDENTIFICATION, eb_smp_central_identification_proc },
+    { SMP_IDENTITY_INFORMATION,   eb_smp_identity_information_proc   },
+    { SMP_IDENTITY_ADDR_INFO,     eb_smp_identity_addr_info_proc     },
+    { SMP_SIGNING_INFORMATION,    eb_smp_signing_information_proc    },
+    { SMP_SECURITY_REQUEST,       eb_smp_security_request_proc       },
+    { SMP_PAIRING_PUBLIC_KEY,     eb_smp_pairing_public_key_proc     },
+    { SMP_PAIRING_DHKEY_CHECK,    eb_smp_pairing_dhkey_check_proc    },
+    { SMP_PAIRING_KEY_NOTIFY,     eb_smp_pairing_key_notify_proc     },
 };
 
 uint32_t eb_smp_security_req(struct eb_smp *smp, uint8_t conn_idx, uint8_t auth)

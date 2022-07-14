@@ -62,12 +62,15 @@ enum EB_SMP_ERR {
     EB_SMP_ERR_KEY_REJECTED                    = 0x050F,
 };
 
+void smp_send_test(uint8_t conn_idx, uint8_t *data, int len, void *usr_data);
 struct eb_smp_callbacks {
     void (*send)(uint8_t conn_idx, uint8_t *data, int len, void *usr_data);
     void (*connected)(uint8_t conn_idx, uint8_t role, void *usr_data);
     void (*disconnected)(uint8_t conn_idx, void *usr_data);
     void (*proc)(uint8_t conn_idx, struct smp_param *param, void *usr_data);
     void (*ltk_resp)(uint8_t conn_idx, uint8_t *key, void *usr_data);
+    void *(*msg_malloc)(size_t size, uint8_t priority);
+    void (*msg_free)(void *p);
 };
 
 struct eb_smp_cfg {

@@ -196,7 +196,7 @@ static void hci_proc_evt(uint8_t evt_code, void *payload, int len, void *usr_dat
         }
     } else if (evt_code == HCI_ENCRYPTION_CHANGE_V1) {
         struct hci_encryption_change_v1 *p = payload;
-        // eb_smpp_encrypt_changed(smp, p->connection_handle, p->encryption_enabled, 16);
+        eb_psmp_encrypt_changed(smp, p->connection_handle, p->encryption_enabled, 16);
         eb_pgatt_sec_changed(gatt, p->connection_handle, EB_GATT_SEC_ENCRYPTED);
     }
 }
@@ -226,21 +226,21 @@ static void l2cap_proc(uint8_t conn_idx, uint16_t cid, void *payload, int len)
     if (cid == EB_L2CAP_CID_ATT) {
         eb_pgatt_received(gatt, conn_idx, payload, len);
     } else if (cid == EB_L2CAP_CID_SMP) {
-        // eb_smpp_received(smp, conn_hdl, payload, len);
+        eb_psmp_received(smp, conn_idx, payload, len);
     }
 }
 
 static void l2cap_connected(uint8_t conn_idx, uint8_t role, uint8_t *peer_addr, uint8_t peer_addr_type,
                             uint8_t *local_addr, uint8_t local_addr_type)
 {
-    // eb_smpp_connected(smp, conn_hdl, role, peer_addr, peer_addr_type, local_addr, local_addr_type);
+    eb_psmp_connected(smp, conn_idx, role, peer_addr, peer_addr_type, local_addr, local_addr_type);
     eb_pgatt_connected(gatt, conn_idx);
-    // eb_smp_security_req(smp, conn_hdl, SMP_AUTH_FLAGS_BONDING);
+    eb_smp_security_req(smp, conn_idx, SMP_AUTH_FLAGS_BONDING);
 }
 
 static void l2cap_disconnected(uint8_t conn_idx)
 {
-    // eb_smpp_disconnected(smp, conn_hdl);
+    eb_psmp_disconnected(smp, conn_idx);
     eb_pgatt_disconnected(gatt, conn_idx);
 }
 
@@ -277,8 +277,8 @@ static void hci_proc_le_evt(uint8_t subcode, void *payload, int len, void *usr_d
         struct hci_read_remote_version_information r = { p->connection_handle };
         eb_hci_cmd_send(hci, HCI_READ_REMOTE_VERSION_INFORMATION, &r);
     } else if (subcode == HCI_LE_LONG_TERM_KEY_REQUEST) {
-        // struct hci_le_long_term_key_request *p = payload;
-        // eb_smpp_ltk_request(smp, p->connection_handle, p->random_number, p->encrypted_diversifier);
+        struct hci_le_long_term_key_request *p = payload;
+        eb_psmp_ltk_request(smp, p->connection_handle, p->random_number, p->encrypted_diversifier);
     }
 }
 
@@ -327,21 +327,24 @@ static void gatt_proc_cb(uint8_t conn_idx, struct gatt_param *param)
     }
 }
 
-#if 0
-static void smp_send_cb(uint16_t conn_hdl, uint8_t *data, int len, void *usr_data)
+#if 1
+static void smp_send_cb(uint8_t conn_idx, uint8_t *data, int len, void *usr_data)
 {
-    struct eb_l2cap_send_data l2cap_data = {
-        conn_hdl, EB_L2CAP_CID_SMP, data, len
-    };
-    eb_l2cap_send(l2cap, &l2cap_data);
+    struct eb_l2cap_send_data *l2cap_data = (struct eb_l2cap_send_data *)
+                                            (data - offsetof(struct eb_l2cap_send_data, payload));
+    l2cap_data->conn_idx = conn_idx;
+    l2cap_data->seq_num = 0;
+    l2cap_data->length = len;
+    l2cap_data->cid = EB_L2CAP_CID_SMP;
+    eb_l2cap_send(l2cap, l2cap_data);
 }
-static void smp_conn_cb(uint16_t conn_hdl, uint8_t role, void *usr_data)
+static void smp_conn_cb(uint8_t conn_hdl, uint8_t role, void *usr_data)
 {
 }
-static void smp_disconn_cb(uint16_t conn_hdl, void *usr_data)
+static void smp_disconn_cb(uint8_t conn_hdl, void *usr_data)
 {
 }
-static void smp_proc_cb(uint16_t conn_hdl, struct smp_param *param, void *usr_data)
+static void smp_proc_cb(uint8_t conn_hdl, struct smp_param *param, void *usr_data)
 {
     switch (param->evt_id) {
         case EB_SMP_PAIRING_REQ: {
@@ -354,7 +357,7 @@ static void smp_proc_cb(uint16_t conn_hdl, struct smp_param *param, void *usr_da
     }
 }
 #endif
-static void smp_ltk_resp_cb(uint16_t conn_hdl, uint8_t *key, void *usr_data)
+static void smp_ltk_resp_cb(uint8_t conn_hdl, uint8_t *key, void *usr_data)
 {
     struct hci_le_long_term_key_request_reply p;
     p.connection_handle = conn_hdl;
@@ -432,10 +435,13 @@ void easy_init(void)
     gatt = eb_gatt_init(&gatt_param);
     att_db_init();
 
-    // struct eb_smp_cfg smp_cfg = {
-    //     smp_send_cb, smp_conn_cb, smp_disconn_cb, smp_proc_cb, smp_ltk_resp_cb, 4, NULL
-    // };
-    // smp = eb_smp_init(&smp_cfg, NULL);
+    const struct eb_smp_callbacks smp_cbs = {
+        smp_send_cb, smp_conn_cb, smp_disconn_cb, smp_proc_cb, smp_ltk_resp_cb, gatt_msg_malloc_cb, gatt_msg_free_cb
+    };
+    struct eb_smp_cfg smp_cfg = {
+        &smp_cbs, 4, NULL
+    };
+    smp = eb_smp_init(&smp_cfg, NULL);
 
     #ifdef SMP_ALG_HCI_ENC
     eb_smp_aes128_init(encrypt_data, NULL);
