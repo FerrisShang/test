@@ -26,20 +26,22 @@ log_error(fmt, ...)
 支持优先级critical,high,mid,low这几种, critical malloc失败直接挂死，高优先级可以抢占低优先级内存
 
 === API ===
-接口用xxx.h文件，内部接口（适配接口）用xxx_int.h文件，内部接口包含外部接口
+接口用ebh_xxx.h文件，内部接口（适配接口）用ebh_int_xxx.h文件，内部接口包含外部接口
 host接口间采用弱符号方式相互调用，方便适配用户接口
 内外接口完全分开，.h不允许混合使用(仅允许接口函数同时访问内外接口)
 
 === 命名规则 ===
-用户接口函数 ebh_xxx
-无用户接口变量 -
-内部共享函数    ebh_int_mod_xxx
-内部static函数  ebh_static_mod_xxx
-内部共享变量    ebh_int_mod_xxx
-内部共享c变量   ebh_int_const_mod_xxx
-内部static变量  ebh_static_mod_xxx
-内部cstatic变量 ebh_cstatic_mod_xxx
+用户接口函数    ebh_mod
+无用户接口变量  -
+内部接口函数    ebh_mod_int_xxx
+内部porting函数 ebh_mod_port_xxx // 用weak符号定义
+内部static函数  ebh_mod_static_xxx
+内部共享变量    -
+内部共享c变量   ebh_mod_int_c_xxx
+内部static变量  ebh_mod_m_xxx
+内部cstatic变量 ebh_mod_c_xxx
 
+porting 函数用于协议栈整体移植和调试时需要适配的函数，如用户接口函数
 
 
 
